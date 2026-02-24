@@ -1,0 +1,61 @@
+# ============================================
+# MLOmics Project .gitignore
+# ============================================
+
+# ----- Agent -----
+.agents
+
+# ----- Data (raw & processed — too large for Git) -----
+data/raw/
+data/preprocessed/
+
+# ----- Model artifacts -----
+*.pkl
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.joblib
+*.onnx
+
+# ----- Python -----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ----- Jupyter Notebooks -----
+.ipynb_checkpoints/
+
+# ----- Environment -----
+.env
+.venv/
+venv/
+env/
+*.env.local
+
+# ----- IDE -----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ----- OS -----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----- Logs & temp -----
+*.log
+*.tmp
+*.temp
+
+# ----- Dataset directory (original download, kept separate) -----
+dataset/
+/content
+
