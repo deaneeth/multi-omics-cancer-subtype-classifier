@@ -1,0 +1,71 @@
+# ============================================
+# MLOmics Project Configuration
+# ============================================
+# Central configuration file — ALL hyperparameters, paths, and seeds live here.
+# Loaded via: from src.utils import load_config; config = load_config()
+# ============================================
+
+project:
+  name: "MLOmics"
+  version: "1.0"
+  seed: 42
+  cancer_types: ["GS-BRCA", "GS-COAD"]
+
+paths:
+  raw_data: "data/raw"
+  preprocessed: "data/preprocessed"
+  toy_data: "data/toy"
+  models: "models"
+  results: "results"
+  cv_folds: "data/cv_folds.json"
+  sample_map: "data/sample_map.csv"
+  experiment_log: "experiment_log.csv"
+
+modalities:
+  mrna:
+    name: "mRNA"
+    feature_count: 5000
+    file_pattern: "{cancer}_mRNA_top.csv"
+  mirna:
+    name: "miRNA"
+    feature_count: 200
+    file_pattern: "{cancer}_miRNA_top.csv"
+  methy:
+    name: "Methylation"
+    feature_count: 5000
+    file_pattern: "{cancer}_Methy_top.csv"
+  cnv:
+    name: "CNV"
+    feature_count: 5000
+    file_pattern: "{cancer}_CNV_top.csv"
+
+preprocessing:
+  drop_threshold: 0.5 # Drop samples with >50% missing modalities
+  scaling: "zscore" # z-score normalization
+
+baselines:
+  xgboost:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.1
+    random_state: 42
+  random_forest:
+    n_estimators: 300
+    max_depth: null # None = unlimited depth
+    random_state: 42
+
+fusion:
+  encoder_hidden: 256
+  latent_dims: [32, 64, 128] # Candidates to try
+  default_latent_dim: 64
+  classifier_hidden: 128
+  dropout: 0.3
+  batch_size: 32
+  epochs: 100
+  patience: 10 # Early stopping
+  learning_rate: 0.001
+  weight_decay: 0.0001
+
+evaluation:
+  n_folds: 5
+  metrics: ["precision", "recall", "f1", "nmi", "ari"]
