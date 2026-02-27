@@ -28,7 +28,7 @@ modalities:
     file_pattern: "{cancer}_mRNA_top.csv"
   mirna:
     name: "miRNA"
-    feature_count: 200
+    feature_count: null  # varies by cancer: BRCA=366, COAD=200 — read dynamically
     file_pattern: "{cancer}_miRNA_top.csv"
   methy:
     name: "Methylation"
