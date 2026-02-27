@@ -1,0 +1,95 @@
+{
+  "basic_checks": {
+    "Modality shapes correct": true,
+    "No NaN after preprocessing": true,
+    "No Inf after preprocessing": true,
+    "Train mean ~ 0": true,
+    "Train std ~ 1": true,
+    "No sample overlap": true,
+    "Samples match fold file": true,
+    "Label shuffle BRCA": false,
+    "Label shuffle COAD": false,
+    "PCA plots saved": true
+  },
+  "extended_checks": {
+    "GS-BRCA V1": true,
+    "GS-BRCA V2": true,
+    "GS-BRCA V3": true,
+    "GS-BRCA V4": true,
+    "GS-BRCA V5": true,
+    "GS-BRCA V6": true,
+    "GS-BRCA V7": false,
+    "GS-BRCA V8": true,
+    "GS-BRCA V9": true,
+    "GS-BRCA V10": true,
+    "GS-BRCA V14": true,
+    "GS-BRCA V15": true,
+    "GS-BRCA V16": true,
+    "GS-BRCA V17": true,
+    "GS-BRCA V18": true,
+    "GS-BRCA V19": true,
+    "GS-BRCA V20": true,
+    "GS-BRCA V21": true,
+    "GS-COAD V1": true,
+    "GS-COAD V2": true,
+    "GS-COAD V3": true,
+    "GS-COAD V4": true,
+    "GS-COAD V5": true,
+    "GS-COAD V6": true,
+    "GS-COAD V7": true,
+    "GS-COAD V8": true,
+    "GS-COAD V9": true,
+    "GS-COAD V10": true,
+    "GS-COAD V14": true,
+    "GS-COAD V15": true,
+    "GS-COAD V16": true,
+    "GS-COAD V17": true,
+    "GS-COAD V18": true,
+    "GS-COAD V19": true,
+    "GS-COAD V20": true,
+    "GS-COAD V21": true,
+    "V11": true,
+    "V12": true,
+    "V13": true
+  },
+  "label_shuffle": {
+    "GS-BRCA": {
+      "f1": 0.3804598187345256,
+      "random_f1": 0.2,
+      "pass": false
+    },
+    "GS-COAD": {
+      "f1": 0.5322003577817531,
+      "random_f1": 0.25,
+      "pass": false
+    }
+  },
+  "pca_variance": {
+    "GS-BRCA": [
+      0.08376308008691673,
+      0.06378143431845248
+    ],
+    "GS-COAD": [
+      0.08805521237295919,
+      0.050506024836961226
+    ]
+  },
+  "basic_pass": 8,
+  "basic_total": 10,
+  "extended_pass": 38,
+  "extended_total": 39,
+  
+  "known_limitations": {
+  "label_shuffle_elevated_f1": {
+    "brca_shuffle_f1": 0.38,
+    "coad_shuffle_f1": 0.53,
+    "explanation": "MLOmics Top features selected via global ANOVA across all samples (Issue #7). This is benchmark-level feature selection bias, not modeling-stage leakage. V14 (zero train/val overlap) confirms our pipeline introduces no additional leakage.",
+    "action": "Documented in thesis Methods limitations section."
+  },
+  "brca_mirna_nan_columns": {
+    "count": 166,
+    "explanation": "All-NaN miRNA columns imputed with train-fold medians. Expected given 111,386 NaN values in raw miRNA data.",
+    "action": "Handled by PerModalityImputer."
+  }
+}
+}
