@@ -9,12 +9,16 @@ CRITICAL RULES:
   - Never fit on combined or future data
 """
 
+import json
 import logging
+import os
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 from src.data_loader import MODALITY_KEYS, get_common_samples, load_labels, load_modality
@@ -273,3 +277,163 @@ def concatenate_modalities(
         f"{concatenated.shape[0]} samples x {concatenated.shape[1]} features"
     )
     return concatenated, feature_names
+
+
+# ---------------------------------------------------------------------------
+# create_cv_folds
+# ---------------------------------------------------------------------------
+def create_cv_folds(
+    cancer_type: str,
+    config: dict,
+    n_folds: int = 5,
+    seed: int = 42,
+    use_toy: bool = False,
+) -> List[Dict[str, Any]]:
+    """Create patient-level stratified k-fold CV and save to cv_folds.json.
+
+    Verifies that each TCGA sample ID maps to a unique patient
+    (no patient split across folds). Saves all cancer types into
+    a single JSON file as the single source of truth for all splits.
+
+    Args:
+        cancer_type: e.g. "GS-BRCA".
+        config: Project config dict.
+        n_folds: Number of folds (default 5).
+        seed: Random seed (default 42).
+        use_toy: If True, load toy data and save to data/toy/cv_folds.json.
+
+    Returns:
+        List of fold dicts: [{"fold": 0, "train": [...], "val": [...]}, ...]
+    """
+    # 1. Load labels and common samples
+    common_samples = get_common_samples(cancer_type, config, use_toy=use_toy)
+    labels = load_labels(cancer_type, config, use_toy=use_toy)
+    labels = labels.loc[labels.index.isin(common_samples)]
+
+    sample_ids = list(labels.index)
+    y = labels.values
+    n_samples = len(sample_ids)
+
+    # 2. Patient-level verification
+    # TCGA IDs: "TCGA.XX.XXXX.01" -> patient = "TCGA.XX.XXXX"
+    patient_ids = [".".join(s.split(".")[:-1]) for s in sample_ids]
+    n_unique_patients = len(set(patient_ids))
+    duplicates = [
+        pid for pid, count in Counter(patient_ids).items() if count > 1
+    ]
+
+    if duplicates:
+        logger.warning(
+            f"{cancer_type}: {len(duplicates)} patients with multiple samples. "
+            f"Would need StratifiedGroupKFold. Examples: {duplicates[:3]}"
+        )
+        raise ValueError(
+            f"Multi-sample patients detected in {cancer_type}. "
+            f"StratifiedGroupKFold not yet implemented. "
+            f"Duplicates: {duplicates[:5]}"
+        )
+
+    logger.info(
+        f"{cancer_type}: {n_samples} samples, {n_unique_patients} unique patients "
+        f"(1:1 mapping confirmed)"
+    )
+
+    # 3. Create stratified folds
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    folds = []
+    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(sample_ids, y)):
+        train_samples = [sample_ids[i] for i in train_idx]
+        val_samples = [sample_ids[i] for i in val_idx]
+
+        # Overlap assertion
+        overlap = set(train_samples) & set(val_samples)
+        assert len(overlap) == 0, f"LEAK in fold {fold_idx}: {len(overlap)} shared"
+
+        folds.append({
+            "fold": fold_idx,
+            "train": train_samples,
+            "val": val_samples,
+        })
+
+    # 4. Compute class distribution
+    class_dist = {str(k): int(v) for k, v in Counter(y).items()}
+
+    # 5. Log per-fold summary
+    for f in folds:
+        train_labels = labels.loc[f["train"]].values
+        val_labels = labels.loc[f["val"]].values
+        train_dist = dict(Counter(train_labels))
+        val_dist = dict(Counter(val_labels))
+        logger.info(
+            f"  Fold {f['fold']}: train={len(f['train'])}, val={len(f['val'])} "
+            f"| train_dist={train_dist} | val_dist={val_dist}"
+        )
+
+    # 6. Save to JSON
+    cv_dir = os.path.join("data", "toy") if use_toy else "data"
+    cv_path = os.path.join(cv_dir, "cv_folds.json")
+
+    # Load existing file to preserve other cancer types
+    existing = {}
+    if os.path.exists(cv_path):
+        with open(cv_path, "r") as f:
+            existing = json.load(f)
+
+    existing[cancer_type] = {
+        "n_folds": n_folds,
+        "seed": seed,
+        "n_samples": n_samples,
+        "class_distribution": class_dist,
+        "folds": folds,
+    }
+
+    with open(cv_path, "w") as f:
+        json.dump(existing, f, indent=2)
+    logger.info(f"CV folds saved to {cv_path}")
+
+    return folds
+
+
+# ---------------------------------------------------------------------------
+# load_cv_folds
+# ---------------------------------------------------------------------------
+def load_cv_folds(
+    cancer_type: str,
+    config: dict,
+    use_toy: bool = False,
+) -> Dict[str, Any]:
+    """Load saved CV folds for a specific cancer type.
+
+    Args:
+        cancer_type: e.g. "GS-BRCA".
+        config: Project config dict (reserved for future path overrides).
+        use_toy: If True, load from data/toy/cv_folds.json.
+
+    Returns:
+        Dict with keys: n_folds, seed, n_samples, class_distribution, folds.
+    """
+    cv_dir = os.path.join("data", "toy") if use_toy else "data"
+    cv_path = os.path.join(cv_dir, "cv_folds.json")
+
+    if not os.path.exists(cv_path):
+        raise FileNotFoundError(
+            f"CV folds file not found: {cv_path}. "
+            f"Run create_cv_folds() first."
+        )
+
+    with open(cv_path, "r") as f:
+        all_folds = json.load(f)
+
+    if cancer_type not in all_folds:
+        available = list(all_folds.keys())
+        raise KeyError(
+            f"Cancer type '{cancer_type}' not in {cv_path}. "
+            f"Available: {available}"
+        )
+
+    logger.info(
+        f"Loaded CV folds for {cancer_type} from {cv_path}: "
+        f"{all_folds[cancer_type]['n_folds']} folds, "
+        f"{all_folds[cancer_type]['n_samples']} samples"
+    )
+    return all_folds[cancer_type]
