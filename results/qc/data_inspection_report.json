@@ -1,0 +1,202 @@
+{
+  "timestamp": "2026-02-27T15:32:08.477291",
+  "GS-BRCA": {
+    "modalities": {
+      "mRNA": {
+        "modality": "mRNA",
+        "raw_shape": [
+          5000,
+          671
+        ],
+        "transposed_shape": [
+          671,
+          5000
+        ],
+        "n_samples": 671,
+        "n_features": 5000,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -5.46086386200848,
+        "max": 14.6276491031283,
+        "mean": -8.471448414427424e-19,
+        "std": 0.9992545656809768,
+        "zero_var_features": 0
+      },
+      "miRNA": {
+        "modality": "miRNA",
+        "raw_shape": [
+          366,
+          671
+        ],
+        "transposed_shape": [
+          671,
+          366
+        ],
+        "n_samples": 671,
+        "n_features": 366,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 111386,
+        "inf_count": 0,
+        "min": -5.618068771,
+        "max": 6.890050847,
+        "mean": 3.874823561862275e-13,
+        "std": 0.9992545656805291,
+        "zero_var_features": 0
+      },
+      "Methy": {
+        "modality": "Methy",
+        "raw_shape": [
+          5000,
+          671
+        ],
+        "transposed_shape": [
+          671,
+          5000
+        ],
+        "n_samples": 671,
+        "n_features": 5000,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -23.0982537440222,
+        "max": 25.3730195344688,
+        "mean": -1.1656713018252136e-17,
+        "std": 0.9992545656809767,
+        "zero_var_features": 0
+      },
+      "CNV": {
+        "modality": "CNV",
+        "raw_shape": [
+          5000,
+          671
+        ],
+        "transposed_shape": [
+          671,
+          5000
+        ],
+        "n_samples": 671,
+        "n_features": 5000,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -15.7701423067716,
+        "max": 13.7607503573421,
+        "mean": -2.2703481750665495e-18,
+        "std": 0.9992545656809767,
+        "zero_var_features": 0
+      }
+    },
+    "alignment": {
+      "common_samples": 671,
+      "union_samples": 671,
+      "label_count": 671
+    },
+    "label_distribution": {
+      "0": 353,
+      "1": 42,
+      "2": 132,
+      "3": 31,
+      "4": 113
+    }
+  },
+  "GS-COAD": {
+    "modalities": {
+      "mRNA": {
+        "modality": "mRNA",
+        "raw_shape": [
+          5000,
+          260
+        ],
+        "transposed_shape": [
+          260,
+          5000
+        ],
+        "n_samples": 260,
+        "n_features": 5000,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -7.32276677232891,
+        "max": 15.670350675438,
+        "mean": 8.220432881409159e-18,
+        "std": 0.9980750703999404,
+        "zero_var_features": 0
+      },
+      "miRNA": {
+        "modality": "miRNA",
+        "raw_shape": [
+          200,
+          260
+        ],
+        "transposed_shape": [
+          260,
+          200
+        ],
+        "n_samples": 260,
+        "n_features": 200,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -4.90245553469587,
+        "max": 6.96184265012751,
+        "mean": 9.838284033601387e-18,
+        "std": 0.9980750703999405,
+        "zero_var_features": 0
+      },
+      "Methy": {
+        "modality": "Methy",
+        "raw_shape": [
+          5000,
+          260
+        ],
+        "transposed_shape": [
+          260,
+          5000
+        ],
+        "n_samples": 260,
+        "n_features": 5000,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -12.2671415530421,
+        "max": 15.8334986449005,
+        "mean": 5.684341886080802e-18,
+        "std": 0.9980750703999406,
+        "zero_var_features": 0
+      },
+      "CNV": {
+        "modality": "CNV",
+        "raw_shape": [
+          5000,
+          260
+        ],
+        "transposed_shape": [
+          260,
+          5000
+        ],
+        "n_samples": 260,
+        "n_features": 5000,
+        "dtype": "[dtype('float64')]",
+        "nan_count": 0,
+        "inf_count": 0,
+        "min": -13.5550225332644,
+        "max": 13.8566317006979,
+        "mean": -2.361188168064333e-18,
+        "std": 0.99807507039994,
+        "zero_var_features": 0
+      }
+    },
+    "alignment": {
+      "common_samples": 260,
+      "union_samples": 260,
+      "label_count": 260
+    },
+    "label_distribution": {
+      "0": 174,
+      "1": 48,
+      "2": 34,
+      "3": 4
+    }
+  }
+}
