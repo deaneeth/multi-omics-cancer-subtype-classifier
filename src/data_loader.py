@@ -20,73 +20,105 @@ logger = logging.getLogger(__name__)
 MODALITY_KEYS = ["mrna", "mirna", "methy", "cnv"]
 
 
+def _resolve_modality_path(
+    cancer_type: str,
+    modality: str,
+    config: dict,
+    use_toy: bool,
+) -> str:
+    """Build the filepath for a modality CSV (raw or toy)."""
+    cancer_short = cancer_type.split("-")[1]
+    pattern = config["modalities"][modality]["file_pattern"].format(cancer=cancer_short)
+
+    if use_toy:
+        # Toy files: data/toy/{cancer}_mRNA_top_toy.csv
+        base, ext = os.path.splitext(pattern)
+        toy_name = f"{base}_toy{ext}"
+        return os.path.join(config["paths"]["toy_data"], toy_name)
+
+    return os.path.join(config["paths"]["raw_data"], cancer_type, "Top", pattern)
+
+
 def load_modality(
     cancer_type: str,
     modality: str,
     config: dict,
+    use_toy: bool = False,
 ) -> pd.DataFrame:
-    """Load a single modality CSV, transpose it, and return samples × features.
+    """Load a single modality CSV, transpose it, and return samples x features.
 
     Args:
         cancer_type: e.g. "GS-BRCA" or "GS-COAD".
         modality: Config key — one of "mrna", "mirna", "methy", "cnv".
         config: Project config dict from load_config().
+        use_toy: If True, load from data/toy/ instead of data/raw/.
 
     Returns:
         DataFrame with shape (n_samples, n_features).
         Index = sample IDs (str), columns = feature names (str).
     """
-    cancer_short = cancer_type.split("-")[1]  # "GS-BRCA" → "BRCA"
-    pattern = config["modalities"][modality]["file_pattern"].format(cancer=cancer_short)
-    filepath = os.path.join(config["paths"]["raw_data"], cancer_type, "Top", pattern)
+    filepath = _resolve_modality_path(cancer_type, modality, config, use_toy)
 
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Modality file not found: {filepath}")
 
     # Load (rows=features, cols=samples) then transpose
     df = pd.read_csv(filepath, index_col=0).T
-
-    # Ensure sample IDs are strings
     df.index = df.index.astype(str)
 
+    tag = "toy" if use_toy else "full"
     logger.info(
-        f"Loaded {cancer_type}/{modality}: {df.shape[0]} samples × {df.shape[1]} features"
+        f"Loaded {cancer_type}/{modality} ({tag}): "
+        f"{df.shape[0]} samples x {df.shape[1]} features"
     )
     return df
 
 
-def load_labels(cancer_type: str, config: dict) -> pd.Series:
+def load_labels(cancer_type: str, config: dict, use_toy: bool = False) -> pd.Series:
     """Load the label file for a cancer type.
 
-    Uses glob to match the *_label_num.csv pattern (numeric prefix varies).
-    Labels are positionally aligned with modality columns — we attach
-    sample IDs from the first available modality.
+    For raw data, uses glob to match *_label_num.csv (numeric prefix varies).
+    For toy data, loads the fixed-name file from data/toy/.
+    Labels are positionally aligned with modality columns — sample IDs
+    are attached from the first available modality.
 
     Args:
         cancer_type: e.g. "GS-BRCA".
         config: Project config dict.
+        use_toy: If True, load from data/toy/.
 
     Returns:
         Series with sample IDs as index and integer labels as values.
     """
     cancer_short = cancer_type.split("-")[1]
-    label_pattern = os.path.join(
-        config["paths"]["raw_data"],
-        cancer_type,
-        "Top",
-        f"*_{cancer_short}_label_num.csv",
-    )
-    label_files = glob.glob(label_pattern)
-    if len(label_files) != 1:
-        raise FileNotFoundError(
-            f"Expected 1 label file matching '{label_pattern}', found {len(label_files)}"
+
+    if use_toy:
+        label_path = os.path.join(
+            config["paths"]["toy_data"],
+            f"{cancer_short}_label_num_toy.csv",
         )
+        if not os.path.exists(label_path):
+            raise FileNotFoundError(f"Toy label file not found: {label_path}")
+    else:
+        label_pattern = os.path.join(
+            config["paths"]["raw_data"],
+            cancer_type,
+            "Top",
+            f"*_{cancer_short}_label_num.csv",
+        )
+        label_files = glob.glob(label_pattern)
+        if len(label_files) != 1:
+            raise FileNotFoundError(
+                f"Expected 1 label file matching '{label_pattern}', "
+                f"found {len(label_files)}"
+            )
+        label_path = label_files[0]
 
-    labels_df = pd.read_csv(label_files[0])
+    labels_df = pd.read_csv(label_path)
 
-    # Labels have no sample IDs — attach them from the first modality
+    # Attach sample IDs from the first modality
     first_mod = MODALITY_KEYS[0]
-    ref_df = load_modality(cancer_type, first_mod, config)
+    ref_df = load_modality(cancer_type, first_mod, config, use_toy=use_toy)
     sample_ids = list(ref_df.index)
 
     if len(labels_df) != len(sample_ids):
@@ -102,31 +134,36 @@ def load_labels(cancer_type: str, config: dict) -> pd.Series:
     )
     labels.index.name = "sample_id"
 
+    tag = "toy" if use_toy else "full"
     logger.info(
-        f"Loaded labels for {cancer_type}: {len(labels)} samples, "
+        f"Loaded labels for {cancer_type} ({tag}): {len(labels)} samples, "
         f"{labels.nunique()} subtypes"
     )
     return labels
 
 
-def get_common_samples(cancer_type: str, config: dict) -> List[str]:
+def get_common_samples(
+    cancer_type: str, config: dict, use_toy: bool = False,
+) -> List[str]:
     """Find sample IDs present in ALL modalities for a cancer type.
 
     Args:
         cancer_type: e.g. "GS-BRCA".
         config: Project config dict.
+        use_toy: If True, load from data/toy/.
 
     Returns:
         Sorted list of sample IDs common to all 4 modalities.
     """
     sample_sets = {}
     for mod_key in MODALITY_KEYS:
-        df = load_modality(cancer_type, mod_key, config)
+        df = load_modality(cancer_type, mod_key, config, use_toy=use_toy)
         sample_sets[mod_key] = set(df.index)
 
     common = sorted(set.intersection(*sample_sets.values()))
+    tag = "toy" if use_toy else "full"
     logger.info(
-        f"{cancer_type}: {len(common)} common samples across all modalities"
+        f"{cancer_type} ({tag}): {len(common)} common samples across all modalities"
     )
     return common
 
