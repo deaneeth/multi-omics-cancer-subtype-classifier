@@ -10,6 +10,22 @@ _Changes on `dev` not yet merged to `main`._
 
 ---
 
+## [v0.2-baselines] - 2026-03-03
+
+### Added
+
+- `src/evaluation.py` with `compute_metrics()`, fold summary, and metrics export (P4-T1)
+- XGBoost 5-fold CV pipeline for GS-BRCA and GS-COAD (P4-T2)
+- RandomForest 5-fold CV pipeline for GS-BRCA and GS-COAD (P4-T3)
+- SHAP analysis script, summary plots, and top 50 features per model (P4-T4)
+- `results/metrics/baseline_comparison.csv` and individual model metric CSVs
+- `results/plots/confusion_matrix_*` evaluating predictive performance
+- `results/shap/xgb/` and `results/shap/rf/` SHAP artifact directories
+- `notebooks/02_baselines.ipynb` evaluating baseline performance and biological relevance
+- Phase 4 gate check passed: all baselines verified, no leakage detected
+
+---
+
 ## [v0.1-preprocessing] - 2026-02-27
 
 ### Added
