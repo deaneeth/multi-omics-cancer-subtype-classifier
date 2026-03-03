@@ -10,6 +10,24 @@ _Changes on `dev` not yet merged to `main`._
 
 ---
 
+## [v0.3-fusion] - 2026-03-04
+
+### Added
+
+- `src/models.py` with `ModalityEncoder`, `FusionClassifier`, `IntermediateFusionModel`, and `MultiOmicsDataset` (P5-T1)
+- `scripts/train_fusion.py` — 5-fold CV training loop with early stopping, LR scheduling, and dynamic class weighting (P5-T2)
+- Intermediate fusion model trained on GS-BRCA (F1=0.81±0.05) and GS-COAD (F1=0.67±0.09) using same `cv_folds.json` as baselines (P5-T2)
+- `models/intermediate_fusion/` — 10 saved `.pt` model checkpoints (5 per cancer type) (P5-T2)
+- `results/metrics/fusion_brca_metrics.csv` and `fusion_coad_metrics.csv` with per-fold metrics (P5-T2)
+- `results/metrics/model_comparison.csv` — XGBoost vs RandomForest vs IntermediateFusion comparison table (P5-T3)
+- `results/plots/fusion_training_curves_*.png` and `.pdf` — training loss and validation F1 per fold (P5-T2)
+- `results/plots/confusion_matrix_fusion_*.png` and `.pdf` for both cancer types (P5-T2)
+- `results/plots/model_comparison_*.png` and `.pdf` — bar charts comparing all three models (P5-T3)
+- `notebooks/03_latent_fusion.ipynb` — fusion model evaluation and cross-model comparison notebook (P5-T3)
+- Phase 5 gate check passed: model trains, same CV folds, metrics in range, artifacts saved, comparison table generated
+
+---
+
 ## [v0.2-baselines] - 2026-03-03
 
 ### Added
