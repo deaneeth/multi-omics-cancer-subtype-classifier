@@ -1,0 +1,190 @@
+{
+  "xgb_kegg": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  },
+  "fusion_kegg": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": true,
+      "p_value": 0.0129349327548588,
+      "matched_term": "p53 signaling pathway"
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": true,
+      "p_value": 3.068382439226218e-05,
+      "matched_term": "Cell cycle"
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  },
+  "xgb_go": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  },
+  "fusion_go": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": true,
+      "p_value": 0.00037923720285731215,
+      "matched_term": "regulation of mitotic cell cycle (GO:0007346)"
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  }
+}
