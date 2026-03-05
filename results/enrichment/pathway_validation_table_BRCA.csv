@@ -1,0 +1,10 @@
+Pathway,XGB KEGG,Fusion KEGG,XGB GO,Fusion GO
+PI3K-Akt signaling,-,-,-,-
+p53 signaling,-,p=1.29e-02,-,-
+MAPK signaling,-,-,-,-
+Cell cycle,-,p=3.07e-05,-,p=3.79e-04
+Apoptosis,-,-,-,-
+Wnt signaling,-,-,-,-
+Breast cancer,-,-,-,-
+Colorectal cancer,-,-,-,-
+Pathways in cancer,-,-,-,-
