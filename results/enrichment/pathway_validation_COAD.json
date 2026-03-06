@@ -1,0 +1,190 @@
+{
+  "xgb_kegg": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  },
+  "fusion_kegg": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  },
+  "xgb_go": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  },
+  "fusion_go": {
+    "PI3K-Akt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "p53 signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "MAPK signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Cell cycle": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Apoptosis": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Wnt signaling": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Breast cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Colorectal cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    },
+    "Pathways in cancer": {
+      "found": false,
+      "p_value": null,
+      "matched_term": null
+    }
+  }
+}

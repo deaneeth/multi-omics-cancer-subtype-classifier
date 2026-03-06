@@ -128,6 +128,36 @@ class IntermediateFusionModel(nn.Module):
         return torch.cat(latents, dim=1)
 
 
+class EarlyFusionMLP(nn.Module):
+    """Early fusion baseline: concatenated features → single MLP.
+
+    Architecture: Linear(input_dim, 256) → ReLU → Dropout
+                  → Linear(256, 128) → ReLU → Dropout
+                  → Linear(128, num_classes)
+
+    Args:
+        input_dim:   Total concatenated feature count (compute dynamically from data).
+        num_classes: Number of output classes.
+        dropout:     Dropout rate.
+    """
+
+    def __init__(self, input_dim: int, num_classes: int = 5, dropout: float = 0.3):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(128, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass: (batch, input_dim) → (batch, num_classes) logits."""
+        return self.mlp(x)
+
+
 class MultiOmicsDataset(Dataset):
     """PyTorch Dataset for multi-omics dict input.
 
