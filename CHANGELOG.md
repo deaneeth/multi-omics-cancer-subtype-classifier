@@ -10,6 +10,25 @@ _Changes on `dev` not yet merged to `main`._
 
 ---
 
+## [v0.4-analysis] - 2026-03-06
+
+### Added
+
+- `src/explainability.py` with SHAP, Deep Attribution (Integrated Gradients via Captum), and KEGG/GO pathway enrichment functions (P6-T1)
+- `scripts/run_explainability.py` executing the full explainability pipeline and extracting top 50 features per model (P6-T2)
+- `results/shap/` and `results/enrichment/` artifacts including baseline SHAP values, fusion Integrated Gradients, and pathway validation reports (P6-T2)
+- `notebooks/04_explainability.ipynb` interactive notebook for visualizing feature attributions and biological enrichment (P6-T2)
+- `src/models.py` updated to include `EarlyFusionMLP` class for architectural ablation studies (P7-T1)
+- `scripts/run_ablations.py` to automate modality removal, early vs. intermediate fusion comparison, and missing modality simulation (P7-T1)
+- `results/metrics/ablation_*.csv` and `results/plots/ablation_*` containing modality removal, fusion comparison, and missing-modality degradation curve results (P7-T1)
+- `notebooks/04b_ablations.ipynb` for analyzing and visualizing ablation study robustness (P7-T1)
+
+### Changed
+
+- Evaluated up to 50% missing modality drop-out robustness on BRCA and COAD, demonstrating intermediate fusion resilience (P7-T1)
+
+---
+
 ## [v0.3-fusion] - 2026-03-04
 
 ### Added

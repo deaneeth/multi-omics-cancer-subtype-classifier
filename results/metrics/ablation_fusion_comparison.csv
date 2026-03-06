@@ -1,0 +1,7 @@
+cancer,model,fusion_type,f1_mean,f1_std,precision_mean,recall_mean
+BRCA,"XGBoost (early concat, tree)",early,0.7939,0.0528,0.8579,0.7745
+BRCA,"EarlyFusionMLP (early concat, deep)",early,0.7222,0.0805,0.7016,0.7750
+BRCA,"IntermediateFusion (per-encoder, deep)",intermediate,0.8082,0.0560,0.7917,0.8501
+COAD,"XGBoost (early concat, tree)",early,0.6358,0.1284,0.6694,0.6244
+COAD,"EarlyFusionMLP (early concat, deep)",early,0.7510,0.0998,0.7551,0.7751
+COAD,"IntermediateFusion (per-encoder, deep)",intermediate,0.6691,0.1056,0.6598,0.6930
