@@ -1,0 +1,9 @@
+cancer,removed_modality,f1_mean,f1_std,precision_mean,recall_mean
+BRCA,mrna,0.7668,0.0812,0.7656,0.7958
+BRCA,mirna,0.8027,0.0481,0.7856,0.8444
+BRCA,methy,0.7880,0.0382,0.7570,0.8377
+BRCA,cnv,0.7894,0.0446,0.7622,0.8524
+COAD,mrna,0.6687,0.1259,0.6532,0.7055
+COAD,mirna,0.8018,0.1160,0.8012,0.8149
+COAD,methy,0.7317,0.1324,0.7170,0.7675
+COAD,cnv,0.6690,0.1319,0.6640,0.6874
