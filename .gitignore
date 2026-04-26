@@ -3,7 +3,10 @@
 # ============================================
 
 # ----- Agent -----
-.agents
+.agents/
+.claude/
+CLAUDE.md
+PROJECT_SNAPSHOT.md
 
 # ----- Data (raw & processed — too large for Git) -----
 data/raw/
@@ -17,6 +20,16 @@ data/preprocessed/
 *.hdf5
 *.joblib
 *.onnx
+!app/model_artifacts/*.pkl
+!app/model_artifacts/*.pt
+# Block old un-suffixed legacy artifacts (replaced by _brca/_coad suffixed versions)
+app/model_artifacts/config.json
+app/model_artifacts/scaler.pkl
+app/model_artifacts/xgb_best.pkl
+app/model_artifacts/fusion_best.pt
+app/model_artifacts/latent_space_data.json
+app/model_artifacts/fusion_attributions.npz
+app/model_artifacts/fusion_attribution_results.json
 
 # ----- Python -----
 __pycache__/
@@ -57,5 +70,5 @@ desktop.ini
 
 # ----- Dataset directory (original download, kept separate) -----
 dataset/
-/content
+content/
 

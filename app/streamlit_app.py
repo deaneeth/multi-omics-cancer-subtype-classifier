@@ -28,7 +28,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(APP_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 
-from src.models import IntermediateFusionModel  # noqa: E402
+from src.models import IntermediateFusionModel, PathwayAwareFusionModel  # noqa: E402
 
 ARTIFACT_DIR = os.path.join(APP_DIR, "model_artifacts")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
@@ -45,30 +45,34 @@ CHART_COLORS = ["#3b82f6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"
 # =====================================================================
 
 @st.cache_resource
-def load_config_json():
+def load_config_json(cancer_type: str = "GS-BRCA"):
     """Load demo configuration (feature names, class labels, modality dims)."""
-    path = os.path.join(ARTIFACT_DIR, "config.json")
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(ARTIFACT_DIR, f"config_{suffix}.json")
     with open(path) as f:
         return json.load(f)
 
 
 @st.cache_resource
-def load_scaler():
+def load_scaler(cancer_type: str = "GS-BRCA"):
     """Load the plain StandardScaler fitted on concatenated training data."""
-    return joblib.load(os.path.join(ARTIFACT_DIR, "scaler.pkl"))
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    return joblib.load(os.path.join(ARTIFACT_DIR, f"scaler_{suffix}.pkl"))
 
 
 @st.cache_resource
-def load_xgb_model():
+def load_xgb_model(cancer_type: str = "GS-BRCA"):
     """Load the best XGBoost model."""
-    return joblib.load(os.path.join(ARTIFACT_DIR, "xgb_best.pkl"))
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    return joblib.load(os.path.join(ARTIFACT_DIR, f"xgb_best_{suffix}.pkl"))
 
 
 @st.cache_resource
-def load_fusion_model():
+def load_fusion_model(cancer_type: str = "GS-BRCA"):
     """Reconstruct and load the best IntermediateFusion model."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
     ckpt = torch.load(
-        os.path.join(ARTIFACT_DIR, "fusion_best.pt"),
+        os.path.join(ARTIFACT_DIR, f"fusion_best_{suffix}.pt"),
         map_location="cpu",
         weights_only=False,
     )
@@ -81,7 +85,40 @@ def load_fusion_model():
         dropout=ckpt["dropout"],
     )
     model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
+    model.train(mode=False)
+    return model
+
+
+@st.cache_resource
+def load_pathway_fusion_model(cancer_type: str = "GS-BRCA"):
+    """Reconstruct and load the best PathwayAwareFusion model."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    cancer_short = cancer_type.split("-")[1]  # "BRCA" or "COAD"
+
+    ckpt = torch.load(
+        os.path.join(ARTIFACT_DIR, f"pathway_fusion_best_{suffix}.pt"),
+        map_location="cpu",
+        weights_only=False,
+    )
+    mapping_path = os.path.join(ARTIFACT_DIR, "pathway_gene_mapping.json")
+    with open(mapping_path) as _f:
+        full_mapping = json.load(_f)
+    mapping = full_mapping[cancer_short]
+    pathway_indices = mapping["pathways"]
+    unmapped_indices = mapping["unmapped_indices"]
+
+    model = PathwayAwareFusionModel(
+        modality_dims=ckpt["modality_dims"],
+        pathway_indices=pathway_indices,
+        unmapped_indices=unmapped_indices,
+        latent_dim=ckpt["latent_dim"],
+        hidden_dim=ckpt["classifier_hidden"],
+        num_classes=ckpt["num_classes"],
+        dropout=ckpt["dropout"],
+        encoder_hidden=ckpt["encoder_hidden"],
+    )
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.train(mode=False)
     return model
 
 
@@ -95,13 +132,58 @@ def load_model_comparison():
 
 
 @st.cache_data
-def load_sample_csv_bytes():
+def load_sample_csv_bytes(cancer_type: str = "GS-BRCA"):
     """Load sample CSV for download button."""
-    path = os.path.join(APP_DIR, "sample_input.csv")
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(APP_DIR, f"sample_input_{suffix}.csv")
     if os.path.exists(path):
         with open(path, "rb") as f:
             return f.read()
     return None
+
+
+@st.cache_data
+def load_latent_space_data(cancer_type: str = "GS-BRCA"):
+    """Load precomputed latent space t-SNE embeddings for the given cancer type."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(ARTIFACT_DIR, f"latent_space_data_{suffix}.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+@st.cache_data
+def load_fusion_attributions(cancer_type: str = "GS-BRCA"):
+    """Load precomputed Integrated Gradients attribution for fusion model."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(ARTIFACT_DIR, f"fusion_attribution_results_{suffix}.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+@st.cache_data
+def load_enrichment_results():
+    """Load precomputed pathway enrichment results."""
+    data = {}
+    for cancer in ["BRCA", "COAD"]:
+        for source in ["fusion", "xgb"]:
+            for db in ["kegg", "go"]:
+                path = os.path.join(RESULTS_DIR, "enrichment", f"{db}_{source}_{cancer}.csv")
+                if os.path.exists(path):
+                    df = pd.read_csv(path)
+                    if not df.empty:
+                        data[f"{db}_{source}_{cancer}"] = df
+        val_path = os.path.join(RESULTS_DIR, "enrichment", f"pathway_validation_{cancer}.json")
+        if os.path.exists(val_path):
+            with open(val_path) as f:
+                data[f"validation_{cancer}"] = json.load(f)
+    attn_path = os.path.join(RESULTS_DIR, "enrichment", "pathway_attention_scores.csv")
+    if os.path.exists(attn_path):
+        data["attention_scores"] = pd.read_csv(attn_path)
+    return data if data else None
 
 
 # =====================================================================
@@ -296,7 +378,7 @@ def render_pipeline_diagram():
     steps = [
         ("📁", "CSV Upload", "Multi-omics data (features x samples)", "rgba(59,130,246,0.15)", "#3b82f6"),
         ("⚙️", "Preprocessing", "Transpose + StandardScaler normalization", "rgba(139,92,246,0.15)", "#8b5cf6"),
-        ("🧠", "Model Inference", "XGBoost or Intermediate Fusion", "rgba(236,72,153,0.15)", "#ec4899"),
+        ("🧠", "Model Inference", "XGBoost, Intermediate Fusion, or Pathway-Aware Fusion", "rgba(236,72,153,0.15)", "#ec4899"),
         ("🎯", "Prediction", "Subtype classification + confidence", "rgba(16,185,129,0.15)", "#10b981"),
         ("🔍", "Explanation", "SHAP waterfall feature importance", "rgba(6,182,212,0.15)", "#06b6d4"),
     ]
@@ -1045,15 +1127,34 @@ def main():
 </div>
 ''', unsafe_allow_html=True)
 
+        cancer_type = st.radio(
+            "Cancer Type",
+            ["GS-BRCA", "GS-COAD"],
+            help="GS-BRCA: Breast cancer, 5 molecular subtypes. "
+                 "GS-COAD: Colon adenocarcinoma, 4 CMS subtypes.",
+        )
+        if cancer_type == "GS-BRCA":
+            st.caption("671 samples · 5 subtypes · 15,366 features")
+        else:
+            st.caption("260 samples · 4 subtypes · 15,200 features")
+
+        st.markdown("---")
+
         model_choice = st.radio(
             "Select Model",
-            ["XGBoost (Baseline)", "Intermediate Fusion (Deep)"],
+            ["XGBoost (Baseline)", "Intermediate Fusion (Deep)", "Pathway-Aware Fusion (Deep + Bio Prior)"],
             help="XGBoost uses early fusion (concatenation). "
-                 "Intermediate Fusion uses per-modality encoders -> latent concat -> MLP.",
+                 "Intermediate Fusion uses per-modality encoders -> latent concat -> MLP. "
+                 "Pathway-Aware Fusion replaces the mRNA encoder with KEGG pathway-grouped attention.",
         )
 
         st.markdown("---")
 
+        _about_cancer = (
+            "GS-BRCA (5 subtypes) · 15,366 features"
+            if cancer_type == "GS-BRCA"
+            else "GS-COAD (4 subtypes) · 15,200 features"
+        )
         st.markdown(
             '<details class="custom-details"><summary>{chev} About this project</summary>'
             '<div class="details-body">'
@@ -1062,30 +1163,86 @@ def main():
             "<strong>Models:</strong><br>"
             "- <strong>XGBoost</strong> — gradient-boosted trees on concatenated features<br>"
             "- <strong>Intermediate Fusion</strong> — per-modality neural encoders -> "
-            "latent concatenation -> MLP classifier<br><br>"
-            "<strong>Cancer type:</strong> GS-BRCA (5 subtypes)<br>"
-            "<strong>Features:</strong> 15,366 total<br><br>"
+            "latent concatenation -> MLP classifier<br>"
+            "- <strong>Pathway-Aware Fusion</strong> — replaces the mRNA encoder with KEGG "
+            "pathway-grouped attention (dual-path: mapped + unmapped genes); best on GS-COAD (F1=0.738)<br><br>"
+            "<strong>Selected:</strong> {cancer}<br><br>"
             '<a href="https://github.com/deaneeth/multi-omics-cancer-subtype-classifier" '
             'target="_blank">GitHub Repository</a>'
-            "</div></details>".format(chev=_CHEVRON_SVG),
+            "</div></details>".format(chev=_CHEVRON_SVG, cancer=_about_cancer),
             unsafe_allow_html=True,
         )
 
+        if cancer_type == "GS-BRCA":
+            _demo_flow = (
+                "Step 1 — Select <em>XGBoost</em>, upload sample_input_brca.csv. "
+                "Note high-confidence HER2-enriched prediction. SHAP shows ESR1 and UBE2T.<br><br>"
+                "Step 2 — Switch to <em>Intermediate Fusion</em>. Compare predictions. "
+                "IG attribution shows miRNA features drive the deep model.<br><br>"
+                "Step 3 — Model Comparison tab: IntermediateFusion has best F1 (0.808) on BRCA. "
+                "Latent space clusters show learned representations. Cell cycle and p53 pathways validated."
+            )
+        else:
+            _demo_flow = (
+                "Step 1 — Select <em>XGBoost</em>, upload sample_input_coad.csv. "
+                "View CMS subtype prediction with confidence scores.<br><br>"
+                "Step 2 — Switch to <em>Intermediate Fusion</em>. Compare predictions. "
+                "Note: COAD is a harder task with fewer samples (260 vs 671).<br><br>"
+                "Step 3 — Model Comparison tab: PathwayAwareFusion has best F1 (0.738) on COAD. "
+                "Removing miRNA actually improves COAD performance (+0.133 F1)."
+            )
         st.markdown(
             '<details class="custom-details"><summary>{chev} How to use</summary>'
             '<div class="details-body">'
-            "1. Select a model in the sidebar<br>"
-            "2. Upload a CSV in <strong>MLOmics format</strong>:<br>"
-            "&nbsp;&nbsp;&nbsp;- Rows = features, Columns = samples<br>"
-            "&nbsp;&nbsp;&nbsp;- First column = feature names (index)<br>"
-            "3. View prediction, confidence, and SHAP explanation<br>"
-            "4. Check the <strong>Model Comparison</strong> tab for benchmarks"
-            "</div></details>".format(chev=_CHEVRON_SVG),
+            "<strong>Quick Start:</strong><br>"
+            "1. Select a cancer type above<br>"
+            "2. Select a model, then upload a CSV (or download the sample)<br>"
+            "3. View predictions and explanations<br>"
+            "4. Explore the Model Comparison tab<br><br>"
+            "<strong>Recommended Demo Flow:</strong><br><br>"
+            "{flow}"
+            "</div></details>".format(chev=_CHEVRON_SVG, flow=_demo_flow),
+            unsafe_allow_html=True,
+        )
+
+        if cancer_type == "GS-BRCA":
+            _findings_body = (
+                "<strong>BRCA Performance:</strong><br>"
+                "- RF: F1=0.602 | XGBoost: F1=0.794<br>"
+                "- <strong>IntermediateFusion: F1=0.808</strong> (best)<br>"
+                "- PathwayAwareFusion: F1=0.801<br><br>"
+                "<strong>Biological Validation:</strong><br>"
+                "- Cell cycle pathway (p=3.07e-5)<br>"
+                "- p53 signaling (p=1.29e-2)<br>"
+                "- 57 GO Biological Process terms enriched<br><br>"
+                "<strong>Insight:</strong> IG attribution shows miRNA features "
+                "dominate the deep model. Per-modality encoders outperform flat concatenation."
+            )
+        else:
+            _findings_body = (
+                "<strong>COAD Performance:</strong><br>"
+                "- RF: F1=0.608 | XGBoost: F1=0.636<br>"
+                "- IntermediateFusion: F1=0.669<br>"
+                "- <strong>PathwayAwareFusion: F1=0.738</strong> (best)<br><br>"
+                "<strong>Key Insight — miRNA Artifact:</strong><br>"
+                "Removing miRNA <em>improves</em> COAD F1 by <strong>+0.133</strong>. "
+                "miRNA contributes noise due to small sample size (260 samples).<br><br>"
+                "<strong>Structural Limitation:</strong><br>"
+                "COAD Class 3 (CMS4) has only 4 samples in some folds — "
+                "per-class metrics may be unreliable for this subtype.<br><br>"
+                "<strong>Insight:</strong> Pathway priors (PathwayAwareFusion) help "
+                "most on COAD — structured biology compensates for limited data."
+            )
+        st.markdown(
+            '<details class="custom-details"><summary>{chev} Key Findings</summary>'
+            '<div class="details-body">'
+            "{body}"
+            "</div></details>".format(chev=_CHEVRON_SVG, body=_findings_body),
             unsafe_allow_html=True,
         )
 
         st.markdown("---")
-        st.caption("v0.4 · Seeds: 42 · 5-fold CV")
+        st.caption("v0.5 · Seeds: 42 · 5-fold CV")
 
     # --- Main content ---
     st.markdown(
@@ -1109,12 +1266,12 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Load shared resources
+    # Load shared resources (keyed on selected cancer type)
     try:
-        cfg = load_config_json()
-        scaler = load_scaler()
+        cfg = load_config_json(cancer_type)
+        scaler = load_scaler(cancer_type)
     except Exception as e:
-        st.error(f"Failed to load model artifacts: {e}")
+        st.error(f"Failed to load model artifacts for {cancer_type}: {e}")
         st.stop()
 
     # --- Tabs ---
@@ -1145,29 +1302,40 @@ def main():
     </div>
     <div style="font-size: 1rem; color: var(--text-secondary); line-height: 1.7; max-width: 520px;">
         Upload a multi-omics CSV file to classify cancer subtypes using machine learning.
-        The system supports both tree-based (XGBoost) and deep learning (Intermediate Fusion)
-        models trained on the MLOmics benchmark dataset.
+        The system supports tree-based (XGBoost) and deep learning (Intermediate Fusion,
+        Pathway-Aware Fusion) models trained on the MLOmics benchmark dataset.
     </div>
 </div>
 ''', unsafe_allow_html=True)
-                st.markdown('''
-<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
-    <span style="background: rgba(59,130,246,0.12); color: #60a5fa; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">mRNA (5,000)</span>
-    <span style="background: rgba(6,182,212,0.12); color: #22d3ee; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">miRNA (366)</span>
-    <span style="background: rgba(16,185,129,0.12); color: #34d399; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">Methylation (5,000)</span>
-    <span style="background: rgba(245,158,11,0.12); color: #fbbf24; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">CNV (5,000)</span>
-</div>
-<div style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 20px;">
-    Cancer type: <strong style="color: var(--text-secondary);">GS-BRCA</strong> — 5 molecular subtypes
-</div>
-''', unsafe_allow_html=True)
+                _mirna_count = cfg["modality_dims"].get("mirna", 366)
+                _n_subtypes = cfg.get("n_classes") or len(cfg.get("class_names", {}))
+                _total_feats = cfg.get("total_features", sum(cfg["modality_dims"].values()))
+                _suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+                st.markdown(
+                    '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">'
+                    '<span style="background: rgba(59,130,246,0.12); color: #60a5fa; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">mRNA (5,000)</span>'
+                    '<span style="background: rgba(6,182,212,0.12); color: #22d3ee; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">miRNA ({mirna})</span>'
+                    '<span style="background: rgba(16,185,129,0.12); color: #34d399; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">Methylation (5,000)</span>'
+                    '<span style="background: rgba(245,158,11,0.12); color: #fbbf24; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">CNV (5,000)</span>'
+                    '</div>'
+                    '<div style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 20px;">'
+                    'Cancer type: <strong style="color: var(--text-secondary);">{ct}</strong>'
+                    ' — {nsub} molecular subtypes · {nfeat:,} total features'
+                    '</div>'.format(
+                        mirna=_mirna_count,
+                        ct=cancer_type,
+                        nsub=_n_subtypes,
+                        nfeat=_total_feats,
+                    ),
+                    unsafe_allow_html=True,
+                )
 
-                sample_bytes = load_sample_csv_bytes()
+                sample_bytes = load_sample_csv_bytes(cancer_type)
                 if sample_bytes:
                     st.download_button(
                         "📥 Download sample CSV",
                         data=sample_bytes,
-                        file_name="sample_input.csv",
+                        file_name=f"sample_input_{_suffix}.csv",
                         mime="text/csv",
                     )
 
@@ -1194,13 +1362,14 @@ def main():
 
                 # --- Feature alignment ---
                 expected_features = cfg["feature_names"]
-                if data_df.shape[1] != len(expected_features):
+                expected_n = len(expected_features)
+                actual_n = data_df.shape[1]
+                if actual_n != expected_n:
                     st.error(
-                        f"Feature count mismatch: uploaded CSV has "
-                        f"{data_df.shape[1]} features, but the model expects "
-                        f"{len(expected_features)}. Ensure the CSV contains "
-                        f"exactly these modalities: "
-                        f"{', '.join(cfg['modality_order'])}."
+                        f"Expected {expected_n:,} features for {cancer_type}, "
+                        f"but got {actual_n:,}. "
+                        f"Please check your input file or switch the cancer type selector. "
+                        f"Required modalities: {', '.join(cfg['modality_order'])}."
                     )
                     st.stop()
 
@@ -1214,11 +1383,14 @@ def main():
                 st.markdown('<div class="section-title">🎯 Prediction Results</div>', unsafe_allow_html=True)
 
                 if model_choice == "XGBoost (Baseline)":
-                    xgb_model = load_xgb_model()
+                    xgb_model = load_xgb_model(cancer_type)
                     preds, probs = predict_xgboost(xgb_model, X_scaled)
-                else:
-                    fusion_model = load_fusion_model()
+                elif model_choice == "Intermediate Fusion (Deep)":
+                    fusion_model = load_fusion_model(cancer_type)
                     preds, probs = predict_fusion(fusion_model, X_scaled, cfg)
+                else:  # Pathway-Aware Fusion
+                    pw_model = load_pathway_fusion_model(cancer_type)
+                    preds, probs = predict_fusion(pw_model, X_scaled, cfg)
 
                 # Display prediction cards
                 sample_ids = list(data_df.index)
@@ -1300,42 +1472,78 @@ def main():
                         "Computing TreeSHAP waterfall plot for the selected sample..."
                     )
                     with st.spinner("Running TreeSHAP..."):
-                        xgb_model = load_xgb_model()
+                        xgb_model = load_xgb_model(cancer_type)
                         render_shap_waterfall(
                             xgb_model, X_scaled, cfg, sample_to_explain
                         )
                 else:
-                    fusion_shap_path = os.path.join(
-                        ARTIFACT_DIR, "fusion_shap_sample.pkl"
-                    )
-                    if os.path.exists(fusion_shap_path):
-                        st.caption(
-                            "Showing precomputed DeepSHAP values for a reference "
-                            "sample."
+                    if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
+                        st.info(
+                            "🧬 This model uses KEGG biological pathway priors to group mRNA genes before fusion. "
+                            "It achieves the best F1 score on GS-COAD (0.738) by leveraging "
+                            "pathway-based structural regularisation."
                         )
-                        precomputed = joblib.load(fusion_shap_path)
-                        shap.plots.waterfall(
-                            precomputed, max_display=15, show=False
+                    fusion_attr = load_fusion_attributions(cancer_type)
+                    selected_sid = sample_ids[sample_to_explain]
+
+                    if fusion_attr and selected_sid in fusion_attr["sample_ids"]:
+                        attr_idx = fusion_attr["sample_ids"].index(selected_sid)
+                        top_feats = fusion_attr["top_features_per_sample"][attr_idx][:15]
+                        top_feats_rev = list(reversed(top_feats))
+
+                        fig_attr = go.Figure(
+                            go.Bar(
+                                x=[f["attribution"] for f in top_feats_rev],
+                                y=[f["feature_name"] for f in top_feats_rev],
+                                orientation="h",
+                                marker_color=[
+                                    "#ef4444" if f["attribution"] > 0 else "#3b82f6"
+                                    for f in top_feats_rev
+                                ],
+                                text=[f"{f['attribution']:+.4f}" for f in top_feats_rev],
+                                textposition="outside",
+                                textfont=dict(size=10),
+                            )
                         )
-                        fig = plt.gcf()
-                        fig.patch.set_facecolor("none")
-                        for a in fig.get_axes():
-                            a.set_facecolor("none")
-                            a.tick_params(colors="#94a3b8")
-                            a.xaxis.label.set_color("#94a3b8")
-                            a.yaxis.label.set_color("#94a3b8")
-                            if a.get_title():
-                                a.title.set_color("#64748b")
-                            for spine in a.spines.values():
-                                spine.set_edgecolor("#64748b")
-                        st.pyplot(fig, clear_figure=True)
-                        plt.close(fig)
+                        fig_attr.update_layout(
+                            title=dict(
+                                text="Integrated Gradients Attribution (Top 15)",
+                                font=dict(size=14),
+                            ),
+                            xaxis_title="Attribution Score",
+                            height=500,
+                        )
+                        apply_dark_theme(fig_attr)
+                        st.plotly_chart(fig_attr, use_container_width=True)
+
+                        mod_counts = {}
+                        for f in fusion_attr["top_features_per_sample"][attr_idx][:20]:
+                            mod_counts[f["modality"]] = mod_counts.get(f["modality"], 0) + 1
+                        mod_text = " · ".join(
+                            f"{m}: {c}" for m, c in sorted(mod_counts.items(), key=lambda x: -x[1])
+                        )
+                        st.caption(f"Top 20 features by modality: {mod_text}")
+                        _attr_note = (
+                            "Red bars push toward predicted class; blue bars push away. "
+                            "Attribution via Integrated Gradients (Captum)."
+                        )
+                        if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
+                            _attr_note += (
+                                " Attributions shown are from the Intermediate Fusion model "
+                                "(same feature space — both models share identical input features)."
+                            )
+                        st.caption(_attr_note)
+                    elif fusion_attr:
+                        _suf = "brca" if cancer_type == "GS-BRCA" else "coad"
+                        st.info(
+                            f"Precomputed attributions available for: "
+                            f"{', '.join(fusion_attr['sample_ids'])}. "
+                            f"Upload sample_input_{_suf}.csv to see them."
+                        )
                     else:
                         st.info(
-                            "Deep attribution (Integrated Gradients) for the "
-                            "fusion model is available in the full analysis "
-                            "notebook (`04_explainability.ipynb`). Real-time SHAP "
-                            "for neural networks requires precomputation."
+                            "Run `python scripts/precompute_fusion_attribution.py` "
+                            "to enable Integrated Gradients attribution display."
                         )
 
             except Exception as e:
@@ -1360,8 +1568,24 @@ def main():
         if comp_df is None:
             st.warning("No model comparison data found.")
         else:
-            # --- Best model banner ---
-            best_row = comp_df.loc[comp_df["F1_mean"].idxmax()]
+            # --- Filter by cancer type (defaults to sidebar selection) ---
+            cancer_types = sorted(comp_df["Cancer"].unique())
+            _ct_options = ["All"] + cancer_types
+            _ct_default_idx = (
+                _ct_options.index(cancer_type) if cancer_type in _ct_options else 0
+            )
+            selected_cancer = st.selectbox(
+                "Filter by cancer type", _ct_options, index=_ct_default_idx,
+                key="comp_cancer_filter",
+            )
+
+            # --- Best model banner (scoped to selected cancer) ---
+            _banner_df = (
+                comp_df[comp_df["Cancer"] == selected_cancer]
+                if selected_cancer != "All"
+                else comp_df[comp_df["Cancer"] == cancer_type]
+            )
+            best_row = _banner_df.loc[_banner_df["F1_mean"].idxmax()]
             st.markdown(
                 '<div class="best-model-banner">'
                 '<span class="trophy">🏆</span>'
@@ -1376,8 +1600,8 @@ def main():
                 unsafe_allow_html=True,
             )
 
-            # --- Metric highlight cards ---
-            mc1, mc2, mc3 = st.columns(3)
+            # --- Metric highlight cards (scoped to selected cancer) ---
+            mc1, mc2, mc3, mc4 = st.columns(4)
             with mc1:
                 st.markdown(
                     '<div class="metric-highlight">'
@@ -1402,14 +1626,26 @@ def main():
                     "</div>".format(best_row["Recall_mean"]),
                     unsafe_allow_html=True,
                 )
+            with mc4:
+                if "auc_mean" in _banner_df.columns and _banner_df["auc_mean"].notna().any():
+                    best_auc_row = _banner_df.loc[_banner_df["auc_mean"].idxmax()]
+                    st.markdown(
+                        '<div class="metric-highlight">'
+                        '<div class="metric-value">{:.3f}</div>'
+                        '<div class="metric-label">Best AUC ({model})</div>'
+                        "</div>".format(best_auc_row["auc_mean"], model=best_auc_row["Model"]),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<div class="metric-highlight">'
+                        '<div class="metric-value">—</div>'
+                        '<div class="metric-label">Best AUC</div>'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
 
             st.markdown("")  # spacer
-
-            # --- Filter by cancer type ---
-            cancer_types = sorted(comp_df["Cancer"].unique())
-            selected_cancer = st.selectbox(
-                "Filter by cancer type", ["All"] + cancer_types
-            )
 
             display_df = comp_df.copy()
             if selected_cancer != "All":
@@ -1420,9 +1656,12 @@ def main():
                 c: "{:.3f}" for c in display_df.columns
                 if c.endswith("_mean") or c.endswith("_std")
             }
+            _highlight_cols = ["F1_mean", "Precision_mean", "Recall_mean"]
+            if "auc_mean" in display_df.columns:
+                _highlight_cols.append("auc_mean")
             st.dataframe(
                 display_df.style.format(format_dict).highlight_max(
-                    subset=["F1_mean", "Precision_mean", "Recall_mean"],
+                    subset=_highlight_cols,
                     color="rgba(16,185,129,0.15)",
                 ),
                 use_container_width=True,
@@ -1433,24 +1672,47 @@ def main():
             )
 
             # --- Plotly grouped bar chart ---
-            st.markdown("#### F1 Score Comparison")
+            _metric_options = ["F1", "Precision", "Recall", "AUC", "NMI", "ARI"]
+            _metric_col_map = {
+                "F1": ("F1_mean", "F1_std"),
+                "Precision": ("Precision_mean", "Precision_std"),
+                "Recall": ("Recall_mean", "Recall_std"),
+                "AUC": ("auc_mean", "auc_std"),
+                "NMI": ("NMI_mean", "NMI_std"),
+                "ARI": ("ARI_mean", "ARI_std"),
+            }
+            # Only offer AUC option if the column exists
+            _available_metrics = [
+                m for m in _metric_options
+                if _metric_col_map[m][0] in display_df.columns
+            ]
+            _bar_metric = st.selectbox(
+                "Chart metric",
+                _available_metrics,
+                index=0,
+                key="bar_metric_selector",
+            )
+            _mean_col, _std_col = _metric_col_map[_bar_metric]
+            st.markdown(f"#### {_bar_metric} Comparison")
             fig = go.Figure()
 
             models = display_df["Model"].unique()
             for i, model_name in enumerate(models):
                 model_data = display_df[display_df["Model"] == model_name]
+                _y = model_data[_mean_col]
+                _err = model_data[_std_col] if _std_col in model_data.columns else None
                 fig.add_trace(
                     go.Bar(
                         name=model_name,
                         x=model_data["Cancer"],
-                        y=model_data["F1_mean"],
+                        y=_y,
                         error_y=dict(
                             type="data",
-                            array=model_data["F1_std"].tolist(),
-                            visible=True,
+                            array=_err.tolist() if _err is not None else [],
+                            visible=_err is not None,
                         ),
                         marker_color=CHART_COLORS[i % len(CHART_COLORS)],
-                        text=[f"{v:.3f}" for v in model_data["F1_mean"]],
+                        text=[f"{v:.3f}" for v in _y],
                         textposition="outside",
                         textfont=dict(size=12),
                     )
@@ -1458,7 +1720,7 @@ def main():
 
             fig.update_layout(
                 barmode="group",
-                yaxis_title="F1 Score (mean +/- std)",
+                yaxis_title=f"{_bar_metric} (mean +/- std)",
                 xaxis_title="Cancer Type",
                 height=480,
                 legend=dict(
@@ -1470,6 +1732,101 @@ def main():
             fig.update_traces(marker=dict(line=dict(width=0)))
             st.plotly_chart(fig, use_container_width=True)
 
+            # --- ROC Curves ---
+            st.markdown("#### ROC Curves")
+            st.caption("Micro-averaged OVR ROC curves for each model (best fold per model).")
+            _roc_cancer = selected_cancer if selected_cancer != "All" else cancer_type
+            _roc_models = {
+                "XGBoost": ("xgb", "brca" if "BRCA" in _roc_cancer else "coad"),
+                "RandomForest": ("rf", "brca" if "BRCA" in _roc_cancer else "coad"),
+                "IntermediateFusion": ("fusion", "brca" if "BRCA" in _roc_cancer else "coad"),
+                "PathwayAwareFusion": ("pathway_fusion", "brca" if "BRCA" in _roc_cancer else "coad"),
+            }
+            # Find best fold for each model using metrics CSVs
+            _roc_best_folds = {}
+            for _rm, (_key, _suf) in _roc_models.items():
+                _m_path = os.path.join(RESULTS_DIR, "metrics", f"{_key}_{_suf}_metrics.csv")
+                if os.path.exists(_m_path):
+                    _mdf = pd.read_csv(_m_path)
+                    _mdf["f1"] = pd.to_numeric(_mdf["f1"], errors="coerce")
+                    _mdf = _mdf.dropna(subset=["f1"])
+                    _mdf = _mdf[~_mdf["fold"].astype(str).str.contains(r"\+/-", na=False)]
+                    if len(_mdf) > 0:
+                        _roc_best_folds[_rm] = int(_mdf.loc[_mdf["f1"].idxmax(), "fold"])
+
+            try:
+                from sklearn.preprocessing import label_binarize
+                from sklearn.metrics import roc_curve, auc as sk_auc
+
+                fig_roc = go.Figure()
+                fig_roc.add_trace(
+                    go.Scatter(x=[0, 1], y=[0, 1], mode="lines",
+                               line=dict(dash="dash", color="rgba(128,128,128,0.4)"),
+                               showlegend=False, name="Random")
+                )
+                _roc_colors = CHART_COLORS[:4]
+                for _ci, (_rm, (_key, _suf)) in enumerate(_roc_models.items()):
+                    _fold = _roc_best_folds.get(_rm)
+                    if _fold is None:
+                        continue
+                    _npz_path = os.path.join(
+                        RESULTS_DIR, "metrics", f"{_key}_{_suf}_fold{_fold}_predictions.npz"
+                    )
+                    if not os.path.exists(_npz_path):
+                        continue
+                    _npz = np.load(_npz_path)
+                    if "y_prob" not in _npz:
+                        continue
+                    _yt = _npz["y_true"]
+                    _yp = _npz["y_prob"]
+                    _nc = _yp.shape[1]
+                    _yt_bin = label_binarize(_yt, classes=list(range(_nc)))
+                    if _nc == 2:
+                        _yt_bin = np.hstack([1 - _yt_bin, _yt_bin])
+                    _fpr, _tpr, _ = roc_curve(_yt_bin.ravel(), _yp.ravel())
+                    _roc_auc = sk_auc(_fpr, _tpr)
+                    fig_roc.add_trace(
+                        go.Scatter(
+                            x=_fpr, y=_tpr, mode="lines",
+                            name=f"{_rm} (AUC={_roc_auc:.3f})",
+                            line=dict(color=_roc_colors[_ci % len(_roc_colors)], width=2),
+                        )
+                    )
+                fig_roc.update_layout(
+                    title=f"ROC Curves — {_roc_cancer} (Best Fold per Model, Micro-Avg OVR)",
+                    xaxis_title="False Positive Rate",
+                    yaxis_title="True Positive Rate",
+                    height=460,
+                    legend=dict(orientation="h", yanchor="top", y=-0.12,
+                                xanchor="center", x=0.5),
+                )
+                apply_dark_theme(fig_roc)
+                st.plotly_chart(fig_roc, use_container_width=True)
+            except Exception as _roc_err:
+                st.info(f"ROC curves unavailable: {_roc_err}")
+
+            # --- Per-fold AUC breakdown ---
+            _auc_csv = os.path.join(RESULTS_DIR, "metrics", "auc_scores.csv")
+            if os.path.exists(_auc_csv):
+                with st.expander("Per-fold AUC breakdown"):
+                    _auc_df = pd.read_csv(_auc_csv)
+                    _auc_filt = _auc_df[_auc_df["cancer"] == _roc_cancer]
+                    if len(_auc_filt) > 0:
+                        try:
+                            _pivot = _auc_filt.pivot(
+                                index="model", columns="fold", values="auc"
+                            ).round(4)
+                            st.dataframe(_pivot, use_container_width=True)
+                            st.caption(
+                                "NaN in GS-COAD fold 0 is expected: class 3 (CMS4) absent from that validation fold."
+                            )
+                        except Exception:
+                            st.dataframe(
+                                _auc_filt[["model", "fold", "auc"]].round(4),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
             # --- Radar chart ---
             st.markdown("#### Multi-Metric Profile")
             metric_cols = [
@@ -1477,10 +1834,13 @@ def main():
                 "NMI_mean", "ARI_mean",
             ]
             metric_labels = ["Precision", "Recall", "F1", "NMI", "ARI"]
+            if "auc_mean" in comp_df.columns:
+                metric_cols.append("auc_mean")
+                metric_labels.append("AUC")
 
             radar_cancer = (
                 selected_cancer if selected_cancer != "All"
-                else "GS-BRCA"
+                else cancer_type
             )
             radar_df = comp_df[comp_df["Cancer"] == radar_cancer]
 
@@ -1535,10 +1895,373 @@ def main():
                 apply_dark_theme(fig_radar)
                 if selected_cancer == "All":
                     st.caption(
-                        "Showing GS-BRCA by default. Select a specific cancer "
-                        "type above to change."
+                        f"Showing {cancer_type} (matches sidebar). "
+                        "Select a specific cancer type above to compare the other."
                     )
                 st.plotly_chart(fig_radar, use_container_width=True)
+
+        # =============================================================
+        # LATENT SPACE VISUALIZATION
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Latent Space Visualization</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "2D projection of the fusion model's learned latent representations. "
+            "Tight clusters indicate the model learned meaningful per-subtype features."
+        )
+
+        latent_data = load_latent_space_data(cancer_type)
+        if latent_data:
+            import plotly.express as px
+
+            # Cancer-specific file has exactly one top-level key (the cancer type)
+            lat_cancer = list(latent_data.keys())[0]
+            cl = latent_data[lat_cancer]
+            cn_map = cl.get("class_names", {})
+
+            lat_method = "t-SNE"
+            coords = cl["tsne"]
+            label_names = [
+                cn_map.get(str(int(l)), f"Class {int(l)}") for l in cl["true_labels"]
+            ]
+            correct = [
+                int(t) == int(p) for t, p in zip(cl["true_labels"], cl["predicted_labels"])
+            ]
+            n_ok = sum(correct)
+            n_tot = len(correct)
+
+            lc1, lc2 = st.columns(2)
+            with lc1:
+                df1 = pd.DataFrame({"x": coords["x"], "y": coords["y"], "Subtype": label_names})
+                fig1 = px.scatter(
+                    df1, x="x", y="y", color="Subtype",
+                    title=f"{lat_method} — True Subtype",
+                    color_discrete_sequence=CHART_COLORS,
+                )
+                fig1.update_traces(marker=dict(size=7, opacity=0.8))
+                fig1.update_layout(
+                    xaxis_title=f"{lat_method}-1", yaxis_title=f"{lat_method}-2",
+                    height=450,
+                    legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
+                )
+                apply_dark_theme(fig1)
+                st.plotly_chart(fig1, use_container_width=True)
+
+            with lc2:
+                acc_labels = ["Correct" if c else "Misclassified" for c in correct]
+                pred_names = [cn_map.get(str(int(p)), f"Class {int(p)}") for p in cl["predicted_labels"]]
+                df2 = pd.DataFrame({
+                    "x": coords["x"], "y": coords["y"],
+                    "Result": acc_labels, "True": label_names, "Predicted": pred_names,
+                })
+                fig2 = px.scatter(
+                    df2, x="x", y="y", color="Result",
+                    title=f"{lat_method} — Correct vs Misclassified ({n_ok}/{n_tot})",
+                    color_discrete_map={"Correct": "#10b981", "Misclassified": "#ef4444"},
+                    hover_data=["True", "Predicted"],
+                )
+                fig2.update_traces(marker=dict(size=7, opacity=0.8))
+                fig2.update_layout(
+                    xaxis_title=f"{lat_method}-1", yaxis_title=f"{lat_method}-2",
+                    height=450,
+                    legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
+                )
+                apply_dark_theme(fig2)
+                st.plotly_chart(fig2, use_container_width=True)
+
+            st.caption(
+                f"Latent: {cl['latent_dim']}D projected to 2D via {lat_method}. "
+                f"Fold {cl['fold']} (best F1). Accuracy: {n_ok}/{n_tot} ({n_ok/n_tot:.1%})."
+            )
+        else:
+            st.info(
+                "Run `python scripts/precompute_latent_space.py` to enable latent space visualization."
+            )
+
+        # =============================================================
+        # TRAINING CONVERGENCE
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Training Convergence</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Training and validation loss/F1 curves across epochs. "
+            "Early stopping (patience=10) captures the best checkpoint."
+        )
+
+        import glob as _glob
+
+        _tc_opts = ["GS-BRCA", "GS-COAD"]
+        tc_cancer = st.selectbox(
+            "Cancer type", _tc_opts,
+            index=_tc_opts.index(cancer_type),
+            key="tc_cancer",
+        )
+        cancer_key = tc_cancer.replace("GS-", "")
+        tc_files = sorted(
+            _glob.glob(os.path.join(RESULTS_DIR, "plots", f"*fusion*training*{cancer_key}*.png"))
+        )
+        if tc_files:
+            for tf in tc_files:
+                label = os.path.basename(tf).replace(".png", "").replace("_", " ").title()
+                st.image(tf, caption=label)
+            st.caption(
+                "Mild train < val loss gap is expected and controlled by dropout + early stopping."
+            )
+        else:
+            st.info(f"Training curve plots not found for {tc_cancer}.")
+
+        # =============================================================
+        # CONFUSION MATRICES
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Confusion Matrices</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Best-fold confusion matrices showing per-class prediction accuracy.")
+
+        cm_c1, cm_c2 = st.columns(2)
+        with cm_c1:
+            cm_model = st.selectbox(
+                "Select model",
+                ["XGBoost", "RandomForest", "IntermediateFusion", "PathwayAwareFusion"],
+                key="cm_model",
+            )
+        with cm_c2:
+            _cm_opts = ["GS-BRCA", "GS-COAD"]
+            cm_cancer = st.selectbox(
+                "Select cancer type",
+                _cm_opts,
+                index=_cm_opts.index(cancer_type),
+                key="cm_cancer",
+            )
+
+        model_file_map = {
+            "XGBoost": "xgb",
+            "RandomForest": "rf",
+            "IntermediateFusion": "fusion",
+            "PathwayAwareFusion": "pathway_fusion",
+        }
+        cm_key = model_file_map.get(cm_model, cm_model.lower())
+        cancer_short = cm_cancer.replace("GS-", "")
+        cm_path = os.path.join(
+            RESULTS_DIR, "plots", f"confusion_matrix_{cm_key}_{cancer_short}.png"
+        )
+        if os.path.exists(cm_path):
+            st.image(cm_path, caption=f"{cm_model} — {cm_cancer} (Best Fold)")
+        else:
+            st.info(f"Confusion matrix not found for {cm_model} on {cm_cancer}.")
+
+        # =============================================================
+        # BIOLOGICAL VALIDATION
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Biological Validation</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "KEGG and GO pathway enrichment on top model-derived features."
+        )
+
+        enrichment = load_enrichment_results()
+        if enrichment:
+            enr_c1, enr_c2 = st.columns(2)
+
+            for col_obj, cancer in [(enr_c1, "BRCA"), (enr_c2, "COAD")]:
+                with col_obj:
+                    st.markdown(f"**{cancer} — Fusion Model (IG)**")
+                    kegg_key = f"kegg_fusion_{cancer}"
+                    if kegg_key in enrichment:
+                        kegg_df = enrichment[kegg_key]
+                        top_kegg = kegg_df.nsmallest(5, "Adjusted P-value")[
+                            ["Term", "Adjusted P-value"]
+                        ].copy()
+                        top_kegg.columns = ["Pathway", "adj. p-value"]
+                        top_kegg["adj. p-value"] = top_kegg["adj. p-value"].apply(
+                            lambda x: f"{x:.2e}"
+                        )
+                        st.dataframe(
+                            top_kegg, use_container_width=True, hide_index=True
+                        )
+                        st.caption(
+                            f"{len(kegg_df)} significant KEGG pathways (adj. p < 0.05)"
+                        )
+                    else:
+                        if cancer == "COAD":
+                            st.info(
+                                "No statistically significant pathway enrichment was found "
+                                "for GS-COAD. This is expected — COAD has only 260 samples "
+                                "and ANOVA pre-selection limits the gene pool. See Key "
+                                "Findings in the sidebar for context."
+                            )
+                        else:
+                            st.info(
+                                f"No significant KEGG pathways (adj. p < 0.05) for {cancer}."
+                            )
+
+            # Known pathway validation (follows sidebar cancer type)
+            _val_cancer_short = "BRCA" if cancer_type == "GS-BRCA" else "COAD"
+            val = enrichment.get(f"validation_{_val_cancer_short}")
+            if val:
+                st.markdown("")
+                st.markdown(
+                    f"**Known Cancer Pathway Validation ({cancer_type} — Fusion KEGG):**"
+                )
+                fusion_kegg_val = val.get("fusion_kegg", {})
+                found = []
+                not_found = []
+                for pathway, info in fusion_kegg_val.items():
+                    if info.get("found"):
+                        pv = info.get("p_value")
+                        found.append(
+                            f"  ✅ {pathway} (p={pv:.2e})" if pv else f"  ✅ {pathway}"
+                        )
+                    else:
+                        not_found.append(f"  — {pathway}")
+                if found:
+                    st.markdown("\n".join(found))
+                else:
+                    st.info(
+                        f"No canonical cancer pathways were enriched for {cancer_type}."
+                    )
+                if not_found:
+                    with st.expander("Pathways not enriched"):
+                        st.markdown("\n".join(not_found))
+
+            # Pathway attention scores
+            if "attention_scores" in enrichment:
+                section_divider()
+                st.markdown(
+                    '<div class="section-title">Pathway Attention (PathwayAwareFusion)</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Top pathways by learned attention weight from the pathway-aware model."
+                )
+
+                attn_df = enrichment["attention_scores"]
+                for cancer_label in ["GS-BRCA", "GS-COAD"]:
+                    cancer_attn = attn_df[attn_df["cancer_type"] == cancer_label]
+                    if len(cancer_attn) > 0:
+                        st.markdown(f"**{cancer_label} — Top 10 Attended Pathways:**")
+                        top_attn = cancer_attn.nlargest(10, "mean_attention_weight")[
+                            ["pathway", "mean_attention_weight"]
+                        ].copy()
+                        top_attn.columns = ["Pathway", "Attention Weight"]
+                        top_attn["Attention Weight"] = top_attn["Attention Weight"].apply(
+                            lambda x: f"{x:.5f}"
+                        )
+                        st.dataframe(
+                            top_attn, use_container_width=True, hide_index=True
+                        )
+        else:
+            st.info("Pathway enrichment results not available.")
+
+        # =============================================================
+        # ABLATION STUDIES
+        # =============================================================
+        abl_path = os.path.join(RESULTS_DIR, "metrics", "ablation_modality_removal.csv")
+        if os.path.exists(abl_path):
+            section_divider()
+            st.markdown(
+                '<div class="section-title">Ablation Studies</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "Impact of removing individual omics modalities on fusion model performance."
+            )
+
+            abl_df = pd.read_csv(abl_path)
+            fig_abl = go.Figure()
+            for cancer_val in abl_df["cancer"].unique():
+                cdata = abl_df[abl_df["cancer"] == cancer_val]
+                fig_abl.add_trace(
+                    go.Bar(
+                        name=str(cancer_val),
+                        x=cdata["removed_modality"],
+                        y=cdata["f1_mean"],
+                        error_y=dict(
+                            type="data",
+                            array=cdata["f1_std"].tolist(),
+                            visible=True,
+                        ),
+                    )
+                )
+            fig_abl.update_layout(
+                title="F1 Score: Effect of Modality Removal",
+                barmode="group",
+                xaxis_title="Removed Modality",
+                yaxis_title="F1 Score",
+                height=400,
+            )
+            apply_dark_theme(fig_abl)
+            fig_abl.update_traces(marker=dict(line=dict(width=0)))
+            st.plotly_chart(fig_abl, use_container_width=True)
+            st.caption(
+                "Bars show F1 when each modality is removed. "
+                "Larger drop = more important modality."
+            )
+
+        fcomp_path = os.path.join(RESULTS_DIR, "metrics", "ablation_fusion_comparison.csv")
+        if os.path.exists(fcomp_path):
+            st.markdown("**Early vs Intermediate Fusion:**")
+            fcomp_df = pd.read_csv(fcomp_path)
+            fmt = {c: "{:.3f}" for c in fcomp_df.columns if c.startswith("f1") or c.startswith("precision") or c.startswith("recall")}
+            st.dataframe(
+                fcomp_df.style.format(fmt),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # Missing Modality Robustness
+        missing_csv_path = os.path.join(RESULTS_DIR, "metrics", "ablation_missing_modality.csv")
+        missing_img_path = os.path.join(RESULTS_DIR, "plots", "missing_modality_curve.png")
+        if os.path.exists(missing_csv_path):
+            section_divider()
+            st.markdown("#### Missing Modality Robustness")
+            st.caption(
+                "F1 score degradation as random modalities are zeroed out (simulated missingness)."
+            )
+            _mm_df = pd.read_csv(missing_csv_path)
+            if os.path.exists(missing_img_path):
+                st.image(missing_img_path, use_container_width=True)
+            else:
+                # Build interactive Plotly chart from CSV
+                fig_mm = go.Figure()
+                for cancer_val in _mm_df["cancer"].unique():
+                    cdata = _mm_df[_mm_df["cancer"] == cancer_val].sort_values("missing_rate")
+                    fig_mm.add_trace(
+                        go.Scatter(
+                            name=f"GS-{cancer_val}",
+                            x=(cdata["missing_rate"] * 100).tolist(),
+                            y=cdata["f1_mean"].tolist(),
+                            mode="lines+markers",
+                            error_y=dict(
+                                type="data",
+                                array=cdata["f1_std"].tolist(),
+                                visible=True,
+                            ),
+                        )
+                    )
+                fig_mm.update_layout(
+                    title="Missing Modality Robustness",
+                    xaxis_title="Missing Rate (%)",
+                    yaxis_title="F1 Score",
+                    height=380,
+                )
+                apply_dark_theme(fig_mm)
+                st.plotly_chart(fig_mm, use_container_width=True)
+            st.caption(
+                "BRCA shows robustness up to 20% missingness. "
+                "COAD degrades earlier due to smaller sample size (260 samples)."
+            )
 
     # =================================================================
     # FOOTER
