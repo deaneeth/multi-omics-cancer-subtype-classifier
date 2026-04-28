@@ -10,6 +10,30 @@ _Changes on `dev` not yet merged to `main`._
 
 ---
 
+## [v0.5-demo] - 2026-04-12
+
+### Added
+
+- Dual-cancer Streamlit demo flow for GS-BRCA and GS-COAD.
+- Cancer-specific demo artifacts under `app/model_artifacts/`.
+- Pathway-aware fusion demo support alongside XGBoost and intermediate fusion.
+- Per-fold AUC outputs: `results/metrics/auc_scores.csv` and `auc_summary.csv`.
+- ROC curve display in the demo and pathway-fusion confusion matrices.
+- Preprocessing verification report in `docs/preprocessing_verification_report.md`.
+
+### Changed
+
+- Demo comparison table now includes AUC alongside F1, precision, recall, NMI, and ARI.
+- Legacy un-suffixed demo artifacts were removed in favor of per-cancer files.
+- Streamlit app layout was updated for the restored dual-cancer demo.
+
+### Notes
+
+- The PathwayAwareFusion demo falls back to intermediate-fusion attributions when pathway-specific IG artifacts are not precomputed.
+- COAD fold 0 AUC may be NaN when the CMS4 class is absent from the validation split.
+
+---
+
 ## [v0.4-analysis] - 2026-03-06
 
 ### Added

@@ -6,47 +6,66 @@
 
 ## Overview
 
-End-to-end reproducible multi-omics machine learning pipeline for cancer subtype classification using the [MLOmics benchmark dataset](https://figshare.com/articles/dataset/MLOmics_Cancer_Multi-Omics_Database_for_Machine_Learning/28729127).
+MLOmics is an end-to-end, reproducible multi-omics pipeline for cancer subtype classification on the [MLOmics benchmark dataset](https://figshare.com/articles/dataset/MLOmics_Cancer_Multi-Omics_Database_for_Machine_Learning/28729127).
 
-**Cancer Types:** GS-BRCA (breast, 5 subtypes) · GS-COAD (colon, 4 subtypes)
+It evaluates two cancer cohorts with four omics modalities:
 
-**Modalities:** mRNA (5000) · miRNA (200) · DNA Methylation (5000) · CNV (5000)
+- GS-BRCA: 5 subtypes
+- GS-COAD: 4 subtypes
+- Modalities: mRNA, miRNA, DNA methylation, CNV
+
+The project includes early-fusion baselines, intermediate fusion, and a pathway-aware fusion variant that injects KEGG pathway structure into the mRNA encoder. The Streamlit demo supports both cancers and all three deployed model families.
 
 ## Models
 
 | Model | Approach |
 |---|---|
-| XGBoost | Early fusion baseline |
-| Random Forest | Early fusion baseline |
-| Intermediate Fusion | Per-modality encoders → latent concat → MLP classifier |
+| XGBoost | Early fusion baseline on concatenated features |
+| Random Forest | Early fusion baseline on concatenated features |
+| EarlyFusionMLP | Ablation baseline on concatenated features |
+| IntermediateFusion | Per-modality encoders → latent concat → MLP classifier |
+| PathwayAwareFusion | KEGG-guided mRNA encoder + standard modality encoders |
+
+## Key Outputs
+
+- `results/metrics/model_comparison.csv` now includes F1, precision, recall, NMI, ARI, accuracy, and AUC.
+- `results/metrics/auc_scores.csv` and `results/metrics/auc_summary.csv` store per-fold and mean AUC values.
+- `app/model_artifacts/` contains the per-cancer demo artifacts used by the Streamlit app.
+- `docs/preprocessing_verification_report.md` records the verified preprocessing checks and documented limitations.
 
 ## Project Structure
 
 ```
-├── data/           # Raw & processed data (gitignored)
-├── src/            # Source modules (data_loader, preprocessing, models, evaluation, explainability, utils)
-├── notebooks/      # Exploration & visualization notebooks
-├── models/         # Saved model artifacts per fold
-├── results/        # Metrics, plots, SHAP values, enrichment outputs
-├── app/            # Streamlit demo application
-├── scripts/        # Training & evaluation CLI scripts
-├── tests/          # Test suite
-├── docs/           # Final report, slides, demo video
-├── config.yaml     # All hyperparameters, paths, seeds
-└── experiment_log.csv  # Experiment tracking
+├── app/            # Streamlit demo application and demo artifacts
+├── data/           # Raw, toy, and derived data files
+├── docs/           # Verification and reporting documents
+├── models/         # Saved model checkpoints per fold
+├── notebooks/      # Exploration, preprocessing, and analysis notebooks
+├── results/        # Metrics, plots, SHAP, enrichment, and QC outputs
+├── scripts/        # Training, evaluation, attribution, and export scripts
+├── src/            # Core data, preprocessing, model, and evaluation code
+├── tests/          # Unit tests
+├── config.yaml     # Project configuration and hyperparameters
+└── experiment_log.csv  # Logged experiments
 ```
 
 ## Setup
 
-Setup instructions coming soon.
+The project is intended to run from the repository root inside the `mlomics` conda environment.
+
+```bash
+conda activate mlomics
+python scripts/compute_auc.py
+streamlit run app/streamlit_app.py
+```
 
 ## Tech Stack
 
-Python 3.9 · PyTorch ≥2.0 · scikit-learn ≥1.2 · XGBoost ≥1.7 · SHAP ≥0.42 · Captum ≥0.6 · gseapy ≥1.0 · Streamlit ≥1.28
+Python 3.9 · PyTorch 2.x · scikit-learn · XGBoost · SHAP · Captum · gseapy · Streamlit
 
 ## Author
 
-**Dineth** — BSc Computer Science Final Year Project
+**Dineth Hettiarachchi** — BSc Computer Science Final Year Project
 
 ---
 
