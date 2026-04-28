@@ -72,3 +72,6 @@ desktop.ini
 dataset/
 content/
 
+# ----- Streamlit runtime config (written by app for theme persistence) -----
+.streamlit/config.toml
+
