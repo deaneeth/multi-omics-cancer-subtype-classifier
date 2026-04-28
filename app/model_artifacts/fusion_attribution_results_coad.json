@@ -1,5 +1,6 @@
 {
   "cancer_type": "GS-COAD",
+  "model_type": "IntermediateFusion",
   "sample_ids": [
     "TCGA.A6.2681.01",
     "TCGA.A6.5666.01",
