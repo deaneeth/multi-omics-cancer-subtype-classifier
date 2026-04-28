@@ -32,17 +32,97 @@ from src.models import IntermediateFusionModel, PathwayAwareFusionModel  # noqa:
 
 ARTIFACT_DIR = os.path.join(APP_DIR, "model_artifacts")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
+_STREAMLIT_CONFIG_DIR = os.path.join(PROJECT_ROOT, ".streamlit")
+_STREAMLIT_CONFIG_FILE = os.path.join(_STREAMLIT_CONFIG_DIR, "config.toml")
+
+# ── Per-theme Streamlit config.toml content ──────────────────────────────────
+# Colors mirror the CSS design-token variables so native Streamlit widgets
+# (radio buttons, inputs, etc.) render in the same palette as the custom CSS.
+_DARK_CONFIG_TOML = """\
+[theme]
+base = "dark"
+primaryColor = "#3b82f6"
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#0f172a"
+textColor = "#e2e8f0"
+font = "sans serif"
+"""
+
+_LIGHT_CONFIG_TOML = """\
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f6f8fb"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+font = "sans serif"
+"""
+
+
+def _read_config_theme() -> str:
+    """Return 'Dark' or 'Light' based on what config.toml currently declares."""
+    try:
+        if os.path.exists(_STREAMLIT_CONFIG_FILE):
+            with open(_STREAMLIT_CONFIG_FILE) as _f:
+                if 'base = "dark"' in _f.read():
+                    return "Dark"
+    except OSError:
+        pass
+    return "Light"
+
+
+def _write_streamlit_config(theme: str) -> None:
+    """Atomically write .streamlit/config.toml so the next server start uses theme."""
+    os.makedirs(_STREAMLIT_CONFIG_DIR, exist_ok=True)
+    content = _DARK_CONFIG_TOML if theme == "Dark" else _LIGHT_CONFIG_TOML
+    tmp = _STREAMLIT_CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as _f:
+        _f.write(content)
+    os.replace(tmp, _STREAMLIT_CONFIG_FILE)
+
 
 # Force non-interactive matplotlib backend (required for Streamlit)
 matplotlib.use("Agg")
 
-# Consistent chart color palette
-CHART_COLORS = ["#3b82f6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"]
+FONT_HEADING = "Space Grotesk"
+FONT_BODY = "Source Sans 3"
+PLOTLY_FONT = f"{FONT_BODY}, sans-serif"
+
+# Consistent chart color palette (no purple for clinical light theme)
+CHART_COLORS = ["#3b82f6", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#14b8a6"]
 
 
+def get_theme_tokens(theme: str) -> dict:
+    theme = (theme or "light").lower()
+    if theme == "dark":
+        return {
+            "plotly_font": "#cbd5e1",
+            "plotly_grid": "rgba(148,163,184,0.25)",
+            "plotly_axis": "rgba(148,163,184,0.3)",
+            "plotly_muted": "rgba(148,163,184,0.18)",
+            "plotly_highlight": "#60a5fa",
+            "plotly_green": "#34d399",
+            "plotly_red": "#f87171",
+            "mpl_text": "#cbd5e1",
+            "mpl_spine": "#475569",
+            "table_highlight": "rgba(16,185,129,0.18)",
+        }
+    return {
+        "plotly_font": "#334155",
+        "plotly_grid": "rgba(15,23,42,0.12)",
+        "plotly_axis": "rgba(15,23,42,0.18)",
+        "plotly_muted": "rgba(15,23,42,0.12)",
+        "plotly_highlight": "#2563eb",
+        "plotly_green": "#059669",
+        "plotly_red": "#dc2626",
+        "mpl_text": "#334155",
+        "mpl_spine": "#94a3b8",
+        "table_highlight": "rgba(5,150,105,0.16)",
+    }
 # =====================================================================
 # Cached Loading Functions — loaded once, reused across reruns
 # =====================================================================
+
 
 @st.cache_resource
 def load_config_json(cancer_type: str = "GS-BRCA"):
@@ -171,12 +251,16 @@ def load_enrichment_results():
     for cancer in ["BRCA", "COAD"]:
         for source in ["fusion", "xgb"]:
             for db in ["kegg", "go"]:
-                path = os.path.join(RESULTS_DIR, "enrichment", f"{db}_{source}_{cancer}.csv")
+                path = os.path.join(
+                    RESULTS_DIR, "enrichment", f"{db}_{source}_{cancer}.csv"
+                )
                 if os.path.exists(path):
                     df = pd.read_csv(path)
                     if not df.empty:
                         data[f"{db}_{source}_{cancer}"] = df
-        val_path = os.path.join(RESULTS_DIR, "enrichment", f"pathway_validation_{cancer}.json")
+        val_path = os.path.join(
+            RESULTS_DIR, "enrichment", f"pathway_validation_{cancer}.json"
+        )
         if os.path.exists(val_path):
             with open(val_path) as f:
                 data[f"validation_{cancer}"] = json.load(f)
@@ -190,6 +274,7 @@ def load_enrichment_results():
 # Helper Functions — Model logic (UNCHANGED)
 # =====================================================================
 
+
 def split_by_modality(X_concat: np.ndarray, cfg: dict) -> dict:
     """Split concatenated feature array into per-modality dict using config."""
     modality_order = cfg["modality_order"]
@@ -201,7 +286,7 @@ def split_by_modality(X_concat: np.ndarray, cfg: dict) -> dict:
         if mod not in modality_dims:
             continue
         dim = modality_dims[mod]
-        x_dict[mod] = X_concat[:, start:start + dim]
+        x_dict[mod] = X_concat[:, start : start + dim]
         start += dim
 
     return x_dict
@@ -217,10 +302,7 @@ def predict_xgboost(model, X_scaled: np.ndarray):
 def predict_fusion(model, X_scaled: np.ndarray, cfg: dict):
     """Run IntermediateFusion prediction. Returns (predicted_class, probabilities)."""
     x_dict = split_by_modality(X_scaled, cfg)
-    x_dict_tensor = {
-        k: torch.tensor(v, dtype=torch.float32)
-        for k, v in x_dict.items()
-    }
+    x_dict_tensor = {k: torch.tensor(v, dtype=torch.float32) for k, v in x_dict.items()}
 
     with torch.no_grad():
         logits = model(x_dict_tensor)
@@ -235,7 +317,7 @@ def compute_shap_explanation(model, X_scaled: np.ndarray, sample_idx: int = 0):
     shap_values = explainer.shap_values(X_scaled)
 
     pred_class = np.argmax(
-        model.predict_proba(X_scaled[sample_idx:sample_idx + 1]), axis=1
+        model.predict_proba(X_scaled[sample_idx : sample_idx + 1]), axis=1
     )[0]
 
     if isinstance(shap_values, list):
@@ -258,27 +340,28 @@ def compute_shap_explanation(model, X_scaled: np.ndarray, sample_idx: int = 0):
 # Plotly Theme Helper
 # =====================================================================
 
-def apply_dark_theme(fig):
-    """Apply consistent theme to any Plotly figure (works on both light/dark)."""
+
+def apply_plotly_theme(fig, theme_tokens: dict):
+    """Apply consistent theme to any Plotly figure (light/dark aware)."""
     fig.update_layout(
         colorway=CHART_COLORS,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, sans-serif", color="#64748b", size=12),
+        font=dict(family=PLOTLY_FONT, color=theme_tokens["plotly_font"], size=12),
         xaxis=dict(
-            gridcolor="rgba(128,128,128,0.15)",
-            linecolor="rgba(128,128,128,0.15)",
-            zerolinecolor="rgba(128,128,128,0.15)",
+            gridcolor=theme_tokens["plotly_grid"],
+            linecolor=theme_tokens["plotly_axis"],
+            zerolinecolor=theme_tokens["plotly_axis"],
         ),
         yaxis=dict(
-            gridcolor="rgba(128,128,128,0.15)",
-            linecolor="rgba(128,128,128,0.15)",
-            zerolinecolor="rgba(128,128,128,0.15)",
+            gridcolor=theme_tokens["plotly_grid"],
+            linecolor=theme_tokens["plotly_axis"],
+            zerolinecolor=theme_tokens["plotly_axis"],
         ),
         legend=dict(
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
-            font=dict(color="#64748b", size=11),
+            font=dict(color=theme_tokens["plotly_font"], size=11),
         ),
         margin=dict(l=50, r=20, t=50, b=50),
     )
@@ -288,6 +371,7 @@ def apply_dark_theme(fig):
 # =====================================================================
 # UI Component Helpers
 # =====================================================================
+
 
 def render_prediction_card(sample_id: str, class_name: str, confidence: float):
     """Render a premium prediction card with gradient top border."""
@@ -300,20 +384,25 @@ def render_prediction_card(sample_id: str, class_name: str, confidence: float):
         '<div class="class-name">{cn}</div>'
         '<div class="confidence-bar-track">'
         '<div class="confidence-bar-fill" style="width:{pct}%;"></div>'
-        '</div>'
+        "</div>"
         '<div class="confidence-text">'
-        '<span>{conf}</span>'
+        "<span>{conf}</span>"
         '<span style="font-size:0.72rem;font-weight:500;">{tl}</span>'
-        '</div></div>'.format(
-            tier=tier, sid=sample_id, cn=class_name,
-            pct=int(confidence * 100), conf=f"{confidence:.1%}",
+        "</div></div>".format(
+            tier=tier,
+            sid=sample_id,
+            cn=class_name,
+            pct=int(confidence * 100),
+            conf=f"{confidence:.1%}",
             tl=tier_label,
         ),
         unsafe_allow_html=True,
     )
 
 
-def render_confidence_chart(probs: np.ndarray, cfg: dict, sample_idx: int = 0):
+def render_confidence_chart(
+    probs: np.ndarray, cfg: dict, theme_tokens: dict, sample_idx: int = 0
+):
     """Render a Plotly bar chart showing per-class confidence."""
     class_names = cfg["class_names"]
     p = probs[sample_idx]
@@ -321,7 +410,9 @@ def render_confidence_chart(probs: np.ndarray, cfg: dict, sample_idx: int = 0):
 
     labels = [class_names.get(str(i), f"Class {i}") for i in range(len(p))]
     colors = [
-        "#3b82f6" if i == pred_class else "rgba(128,128,128,0.15)"
+        theme_tokens["plotly_highlight"]
+        if i == pred_class
+        else theme_tokens["plotly_muted"]
         for i in range(len(p))
     ]
 
@@ -333,7 +424,7 @@ def render_confidence_chart(probs: np.ndarray, cfg: dict, sample_idx: int = 0):
                 marker_color=colors,
                 text=[f"{v:.1%}" for v in p],
                 textposition="auto",
-                textfont=dict(size=13, family="Inter"),
+                textfont=dict(size=13, family=PLOTLY_FONT),
             )
         ]
     )
@@ -345,12 +436,18 @@ def render_confidence_chart(probs: np.ndarray, cfg: dict, sample_idx: int = 0):
         yaxis_title="Probability",
         height=380,
     )
-    apply_dark_theme(fig)
+    apply_plotly_theme(fig, theme_tokens)
     fig.update_yaxes(range=[0, 1])
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_shap_waterfall(model, X_scaled: np.ndarray, cfg: dict, sample_idx: int = 0):
+def render_shap_waterfall(
+    model,
+    X_scaled: np.ndarray,
+    cfg: dict,
+    theme_tokens: dict,
+    sample_idx: int = 0,
+):
     """Compute TreeSHAP and render waterfall plot for one sample."""
     explanation = compute_shap_explanation(model, X_scaled, sample_idx)
     explanation.feature_names = cfg["feature_names"]
@@ -360,13 +457,13 @@ def render_shap_waterfall(model, X_scaled: np.ndarray, cfg: dict, sample_idx: in
     fig.patch.set_facecolor("none")
     for a in fig.get_axes():
         a.set_facecolor("none")
-        a.tick_params(colors="#64748b")
-        a.xaxis.label.set_color("#64748b")
-        a.yaxis.label.set_color("#64748b")
+        a.tick_params(colors=theme_tokens["mpl_text"])
+        a.xaxis.label.set_color(theme_tokens["mpl_text"])
+        a.yaxis.label.set_color(theme_tokens["mpl_text"])
         if a.get_title():
-            a.title.set_color("#64748b")
+            a.title.set_color(theme_tokens["mpl_text"])
         for spine in a.spines.values():
-            spine.set_edgecolor("#64748b")
+            spine.set_edgecolor(theme_tokens["mpl_spine"])
     st.pyplot(fig, clear_figure=True)
     plt.close(fig)
 
@@ -376,36 +473,70 @@ def render_shap_waterfall(model, X_scaled: np.ndarray, cfg: dict, sample_idx: in
 def render_pipeline_diagram():
     """Render pipeline diagram with premium step cards."""
     steps = [
-        ("📁", "CSV Upload", "Multi-omics data (features x samples)", "rgba(59,130,246,0.15)", "#3b82f6"),
-        ("⚙️", "Preprocessing", "Transpose + StandardScaler normalization", "rgba(139,92,246,0.15)", "#8b5cf6"),
-        ("🧠", "Model Inference", "XGBoost, Intermediate Fusion, or Pathway-Aware Fusion", "rgba(236,72,153,0.15)", "#ec4899"),
-        ("🎯", "Prediction", "Subtype classification + confidence", "rgba(16,185,129,0.15)", "#10b981"),
-        ("🔍", "Explanation", "SHAP waterfall feature importance", "rgba(6,182,212,0.15)", "#06b6d4"),
+        (
+            "📁",
+            "CSV Upload",
+            "Multi-omics data (features x samples)",
+            "var(--accent-blue-soft)",
+            "var(--accent-blue-border)",
+        ),
+        (
+            "⚙️",
+            "Preprocessing",
+            "Transpose + StandardScaler normalization",
+            "var(--accent-amber-soft)",
+            "var(--accent-amber-border)",
+        ),
+        (
+            "🧠",
+            "Model Inference",
+            "XGBoost, Intermediate Fusion, or Pathway-Aware Fusion",
+            "var(--accent-cyan-soft)",
+            "var(--accent-cyan-border)",
+        ),
+        (
+            "🎯",
+            "Prediction",
+            "Subtype classification + confidence",
+            "var(--accent-green-soft)",
+            "var(--accent-green-border)",
+        ),
+        (
+            "🔍",
+            "Explanation",
+            "SHAP waterfall feature importance",
+            "var(--accent-blue-soft)",
+            "var(--accent-blue-border)",
+        ),
     ]
 
     parts = []
     for i, (icon, title, desc, bg_color, border_color) in enumerate(steps):
         parts.append(
             '<div class="pipeline-step">'
-            '<div class="step-icon" style="background:{bg};border:1px solid {bc}30;">'
-            '{icon}</div>'
+            '<div class="step-icon" style="background:{bg};border:1px solid {bc};">'
+            "{icon}</div>"
             '<div class="step-text">'
             '<div class="step-title">{title}</div>'
             '<div class="step-desc">{desc}</div>'
-            '</div></div>'.format(icon=icon, title=title, desc=desc, bg=bg_color, bc=border_color)
+            "</div></div>".format(
+                icon=icon, title=title, desc=desc, bg=bg_color, bc=border_color
+            )
         )
         if i < len(steps) - 1:
-            parts.append(
-                '<div class="pipeline-arrow" style="color:{bc};">↓</div>'.format(bc=border_color)
-            )
+            parts.append('<div class="pipeline-arrow">↓</div>')
 
-    html = '<div style="display:flex;flex-direction:column;gap:0;">' + "".join(parts) + "</div>"
+    html = (
+        '<div style="display:flex;flex-direction:column;gap:0;">'
+        + "".join(parts)
+        + "</div>"
+    )
     st.markdown(html, unsafe_allow_html=True)
 
 
 def section_divider():
     st.markdown(
-        '<div style="height:1px;background:linear-gradient(90deg,transparent,rgba(128,128,128,0.15),transparent);margin:28px 0;"></div>',
+        '<div style="height:1px;background:linear-gradient(90deg,transparent,var(--divider-color),transparent);margin:28px 0;"></div>',
         unsafe_allow_html=True,
     )
 
@@ -418,147 +549,142 @@ _CHEVRON_SVG = (
 
 
 # =====================================================================
-# CSS Design System — Premium Dark Theme
+# CSS Design System — Clinical Light + Deep Dark Theme
 # =====================================================================
 
 CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
 
-/* ── ROOT VARIABLES ── */
+/* ── ROOT VARIABLES (Light default) ── */
 :root {
-    --bg-deepest: #0a0e1a;
-    --bg-card: #111827;
-    --bg-elevated: #1a2035;
-    --bg-hover: #1e2a42;
-    --border-subtle: rgba(255,255,255,0.06);
-    --border-hover: rgba(255,255,255,0.12);
-    --text-primary: #f1f5f9;
-    --text-secondary: #94a3b8;
-    --text-muted: #64748b;
-    --accent-blue: #3b82f6;
-    --accent-cyan: #06b6d4;
-    --accent-green: #10b981;
-    --accent-amber: #f59e0b;
-    --accent-red: #ef4444;
-    --accent-purple: #8b5cf6;
-    --gradient-blue: linear-gradient(135deg, #3b82f6, #06b6d4);
-    --gradient-green: linear-gradient(135deg, #10b981, #06b6d4);
-    --gradient-amber: linear-gradient(135deg, #f59e0b, #ef4444);
-    --radius: 12px;
-    --shadow-card: 0 4px 24px rgba(0,0,0,0.25);
-    --shadow-glow-blue: 0 0 20px rgba(59,130,246,0.15);
-}
-
-/* ── LIGHT THEME — override ALL variables ── */
-body.light-theme {
-    --bg-deepest: #f8fafc;
+    --bg-deepest: #f6f8fb;
     --bg-card: #ffffff;
     --bg-elevated: #f1f5f9;
     --bg-hover: #e2e8f0;
-    --border-subtle: rgba(0,0,0,0.08);
-    --border-hover: rgba(0,0,0,0.15);
+    --bg-sidebar: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    --border-subtle: rgba(15,23,42,0.12);
+    --border-hover: rgba(15,23,42,0.2);
     --text-primary: #0f172a;
-    --text-secondary: #475569;
+    --text-secondary: #334155;
     --text-muted: #64748b;
     --accent-blue: #2563eb;
     --accent-cyan: #0891b2;
     --accent-green: #059669;
     --accent-amber: #d97706;
     --accent-red: #dc2626;
-    --accent-purple: #7c3aed;
     --gradient-blue: linear-gradient(135deg, #2563eb, #0891b2);
-    --gradient-green: linear-gradient(135deg, #059669, #0891b2);
+    --gradient-green: linear-gradient(135deg, #059669, #0ea5a5);
     --gradient-amber: linear-gradient(135deg, #d97706, #dc2626);
-    --shadow-card: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
-    --shadow-glow-blue: 0 0 15px rgba(37,99,235,0.08);
+    --radius: 12px;
+    --shadow-card: 0 8px 24px rgba(15,23,42,0.08), 0 2px 6px rgba(15,23,42,0.06);
+    --shadow-glow-blue: 0 0 18px rgba(37,99,235,0.18);
+    --divider-color: rgba(15,23,42,0.12);
+    --chip-blue-bg: rgba(37,99,235,0.12);
+    --chip-blue-text: #1d4ed8;
+    --chip-cyan-bg: rgba(8,145,178,0.12);
+    --chip-cyan-text: #0e7490;
+    --chip-green-bg: rgba(5,150,105,0.12);
+    --chip-green-text: #047857;
+    --chip-amber-bg: rgba(217,119,6,0.12);
+    --chip-amber-text: #b45309;
+    --tone-success-bg: rgba(5,150,105,0.12);
+    --tone-success-border: rgba(5,150,105,0.3);
+    --tone-success-text: #047857;
+    --tone-warning-bg: #fffbeb;
+    --tone-warning-border: #f59e0b;
+    --tone-warning-text: #92400e;
+    --accent-blue-soft: rgba(37,99,235,0.12);
+    --accent-blue-border: rgba(37,99,235,0.3);
+    --accent-cyan-soft: rgba(8,145,178,0.12);
+    --accent-cyan-border: rgba(8,145,178,0.3);
+    --accent-green-soft: rgba(5,150,105,0.12);
+    --accent-green-border: rgba(5,150,105,0.3);
+    --accent-amber-soft: rgba(217,119,6,0.12);
+    --accent-amber-border: rgba(217,119,6,0.3);
+    --font-heading: 'Space Grotesk', sans-serif;
+    --font-body: 'Source Sans 3', sans-serif;
 }
-/* Keep sidebar dark in light mode (brand element) */
-body.light-theme [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1e40af 0%, #1e3a8a 100%) !important;
+
+/* ── DARK THEME OVERRIDES ── */
+body.dark-theme {
+    --bg-deepest: #0b1220;
+    --bg-card: #0f172a;
+    --bg-elevated: #131d33;
+    --bg-hover: #1e293b;
+    --bg-sidebar: linear-gradient(180deg, #0f172a 0%, #0a0f1d 100%);
+    --border-subtle: rgba(148,163,184,0.18);
+    --border-hover: rgba(148,163,184,0.32);
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent-blue: #60a5fa;
+    --accent-cyan: #22d3ee;
+    --accent-green: #34d399;
+    --accent-amber: #fbbf24;
+    --accent-red: #f87171;
+    --gradient-blue: linear-gradient(135deg, #60a5fa, #22d3ee);
+    --gradient-green: linear-gradient(135deg, #34d399, #22d3ee);
+    --gradient-amber: linear-gradient(135deg, #fbbf24, #f87171);
+    --shadow-card: 0 6px 24px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.2);
+    --shadow-glow-blue: 0 0 24px rgba(96,165,250,0.25);
+    --divider-color: rgba(148,163,184,0.18);
+    --chip-blue-bg: rgba(96,165,250,0.12);
+    --chip-blue-text: #93c5fd;
+    --chip-cyan-bg: rgba(34,211,238,0.12);
+    --chip-cyan-text: #67e8f9;
+    --chip-green-bg: rgba(52,211,153,0.12);
+    --chip-green-text: #6ee7b7;
+    --chip-amber-bg: rgba(251,191,36,0.12);
+    --chip-amber-text: #fde68a;
+    --tone-success-bg: rgba(16,185,129,0.12);
+    --tone-success-border: rgba(16,185,129,0.28);
+    --tone-success-text: #34d399;
+    --tone-warning-bg: rgba(245,158,11,0.12);
+    --tone-warning-border: rgba(245,158,11,0.35);
+    --tone-warning-text: #fbbf24;
+    --accent-blue-soft: rgba(96,165,250,0.12);
+    --accent-blue-border: rgba(96,165,250,0.3);
+    --accent-cyan-soft: rgba(34,211,238,0.12);
+    --accent-cyan-border: rgba(34,211,238,0.3);
+    --accent-green-soft: rgba(52,211,153,0.12);
+    --accent-green-border: rgba(52,211,153,0.3);
+    --accent-amber-soft: rgba(251,191,36,0.12);
+    --accent-amber-border: rgba(251,191,36,0.3);
+    color-scheme: dark;
 }
-body.light-theme [data-testid="stSidebar"] h1,
-body.light-theme [data-testid="stSidebar"] h2,
-body.light-theme [data-testid="stSidebar"] h3 {
-    color: #f1f5f9 !important;
-}
-body.light-theme [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-body.light-theme [data-testid="stSidebar"] label,
-body.light-theme [data-testid="stSidebar"] span {
-    color: #cbd5e1 !important;
-}
-body.light-theme [data-testid="stSidebar"] hr {
-    border-color: rgba(255,255,255,0.15) !important;
-}
-body.light-theme [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"] {
-    background: rgba(255,255,255,0.08) !important;
-    border-color: rgba(255,255,255,0.12) !important;
-    color: #e2e8f0 !important;
-}
-body.light-theme [data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"]:hover {
-    background: rgba(255,255,255,0.15) !important;
-    border-color: rgba(255,255,255,0.3) !important;
-}
-body.light-theme [data-testid="stSidebar"] .stCaption {
-    color: rgba(255,255,255,0.5) !important;
-}
-/* Sidebar custom details stay dark-styled in light mode */
-body.light-theme .custom-details summary {
-    background: rgba(255,255,255,0.08);
-    border-color: rgba(255,255,255,0.12);
-    color: #cbd5e1;
-}
-body.light-theme .custom-details summary:hover {
-    background: rgba(255,255,255,0.15);
-    border-color: rgba(255,255,255,0.25);
-}
-body.light-theme .custom-details .details-body {
-    color: rgba(255,255,255,0.6);
-}
-body.light-theme .custom-details .details-body a {
-    color: #38bdf8;
-}
-/* Main-area custom details adapt to light */
-body.light-theme .custom-details-main summary {
-    background: var(--bg-card);
-    border-color: var(--border-subtle);
-    color: var(--text-secondary);
-}
-body.light-theme .custom-details-main .details-body {
-    color: var(--text-muted);
-}
-/* Disclaimer warm tones for light */
-body.light-theme .disclaimer-box {
-    background: #fffbeb;
-    color: #92400e;
-    border-color: #f59e0b;
-}
-/* Light scrollbar */
-body.light-theme ::-webkit-scrollbar-track { background: #f1f5f9; }
-body.light-theme ::-webkit-scrollbar-thumb { background: #cbd5e1; }
-body.light-theme ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-/* Light-mode shadow overrides */
-body.light-theme .pred-card, body.light-theme .pipeline-step, body.light-theme .metric-highlight {
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04);
-}
-body.light-theme .stDownloadButton > button {
-    color: #2563eb !important;
-}
-body.light-theme .stPlotlyChart {
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
+
+body.light-theme { color-scheme: light; }
 
 /* ── GLOBAL TYPOGRAPHY ── */
 html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    font-family: var(--font-body) !important;
     -webkit-font-smoothing: antialiased;
 }
+body {
+    color: var(--text-secondary);
+}
+h1, h2, h3, h4, h5, h6,
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
+.stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+    font-family: var(--font-heading);
+    color: var(--text-primary);
+}
+a { color: var(--accent-blue); }
+.stCaption { color: var(--text-muted) !important; }
 
 /* ── PAGE BACKGROUND ── */
 .stApp {
     background:
-        radial-gradient(ellipse at 20% 0%, rgba(59,130,246,0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 100%, rgba(6,182,212,0.05) 0%, transparent 50%),
+        radial-gradient(1200px circle at 12% -10%, rgba(37,99,235,0.12) 0%, transparent 55%),
+        radial-gradient(1000px circle at 88% 10%, rgba(8,145,178,0.10) 0%, transparent 50%),
+        linear-gradient(180deg, rgba(15,23,42,0.04), rgba(15,23,42,0.02)),
+        var(--bg-deepest) !important;
+}
+body.dark-theme .stApp {
+    background:
+        radial-gradient(900px circle at 12% -10%, rgba(96,165,250,0.16) 0%, transparent 55%),
+        radial-gradient(900px circle at 88% 10%, rgba(34,211,238,0.12) 0%, transparent 50%),
         var(--bg-deepest) !important;
 }
 .stApp > header {
@@ -583,7 +709,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 
 /* ── SIDEBAR ── */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0f172a 0%, #0a0e1a 100%) !important;
+    background: var(--bg-sidebar) !important;
     border-right: 1px solid var(--border-subtle) !important;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
@@ -706,6 +832,77 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
     display: none;
 }
 
+/* ── SIDEBAR BRAND ── */
+.sidebar-brand {
+    padding: 8px 0 20px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 20px;
+}
+.sidebar-logo {
+    font-size: 2rem;
+    font-weight: 800;
+    font-family: var(--font-heading);
+    background: var(--gradient-blue);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+.sidebar-tagline {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+    line-height: 1.4;
+}
+
+/* ── HERO / WELCOME ── */
+.hero-block { margin-bottom: 24px; }
+.hero-title {
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.15;
+    margin-bottom: 12px;
+    font-family: var(--font-heading);
+}
+.brand-gradient {
+    background: var(--gradient-blue);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.hero-subtitle {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 520px;
+}
+
+/* ── CHIP PILLS ── */
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.chip {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+.chip-blue { background: var(--chip-blue-bg); color: var(--chip-blue-text); }
+.chip-cyan { background: var(--chip-cyan-bg); color: var(--chip-cyan-text); }
+.chip-green { background: var(--chip-green-bg); color: var(--chip-green-text); }
+.chip-amber { background: var(--chip-amber-bg); color: var(--chip-amber-text); }
+.chip-meta {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+.chip-meta strong { color: var(--text-secondary); }
+
 /* ── MAIN HEADER ── */
 .main-header {
     font-size: 1.6rem;
@@ -713,6 +910,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
     color: var(--accent-blue);
     margin-bottom: 2px;
     letter-spacing: -0.02em;
+    font-family: var(--font-heading);
 }
 .sub-header {
     font-size: 0.95rem;
@@ -722,13 +920,13 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 
 /* ── DISCLAIMER ── */
 .disclaimer-box {
-    background: rgba(245,158,11,0.08);
-    border: 1px solid rgba(245,158,11,0.2);
+    background: var(--tone-warning-bg);
+    border: 1px solid var(--tone-warning-border);
     border-left: 3px solid var(--accent-amber);
     border-radius: 8px;
     padding: 12px 18px;
     font-size: 0.84rem;
-    color: #fbbf24;
+    color: var(--tone-warning-text);
     margin-bottom: 20px;
 }
 
@@ -777,7 +975,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 .pred-card .confidence-bar-track {
     width: 100%;
     height: 4px;
-    background: rgba(255,255,255,0.06);
+    background: var(--border-subtle);
     border-radius: 2px;
     margin-bottom: 8px;
     overflow: hidden;
@@ -803,7 +1001,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 
 /* ── CARD SHADOW DEPTH ── */
 .pred-card, .pipeline-step, .metric-highlight {
-    box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 16px rgba(0,0,0,0.2), 0 0 1px rgba(255,255,255,0.05) inset;
+    box-shadow: var(--shadow-card);
 }
 
 /* ── WELCOME PAGE ── */
@@ -860,7 +1058,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 }
 .pipeline-arrow {
     text-align: center;
-    color: var(--accent-cyan);
+    color: var(--text-muted);
     font-size: 0.85rem;
     line-height: 1;
     padding: 3px 0;
@@ -869,8 +1067,8 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 
 /* ── BEST MODEL BANNER ── */
 .best-model-banner {
-    background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(6,182,212,0.08) 100%);
-    border: 1px solid rgba(16,185,129,0.2);
+    background: linear-gradient(135deg, var(--tone-success-bg) 0%, var(--accent-cyan-soft) 100%);
+    border: 1px solid var(--tone-success-border);
     border-radius: var(--radius);
     padding: 14px 20px;
     margin-bottom: 20px;
@@ -882,7 +1080,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 .best-model-banner .banner-text {
     font-size: 0.92rem;
     font-weight: 600;
-    color: var(--accent-green);
+    color: var(--tone-success-text);
 }
 
 /* ── METRIC HIGHLIGHT CARDS ── */
@@ -900,6 +1098,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    font-family: var(--font-heading);
 }
 .metric-highlight .metric-label {
     font-size: 0.78rem;
@@ -919,6 +1118,14 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 [data-testid="stFileUploader"]:hover {
     border-color: var(--accent-blue) !important;
 }
+[data-testid="stFileUploader"] * {
+    color: var(--text-secondary) !important;
+}
+[data-testid="stFileUploader"] button {
+    background: var(--bg-elevated) !important;
+    border: 1px solid var(--border-subtle) !important;
+    color: var(--text-primary) !important;
+}
 
 /* ── DATAFRAME ── */
 [data-testid="stDataFrame"] {
@@ -929,18 +1136,43 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
     box-shadow: var(--shadow-card);
     overflow: hidden;
 }
+[data-testid="stDataFrame"] table {
+    color: var(--text-secondary) !important;
+}
+[data-testid="stDataFrame"] thead tr th {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+}
+[data-testid="stDataFrame"] tbody tr td {
+    background: var(--bg-card) !important;
+    color: var(--text-secondary) !important;
+}
 
 /* ── SELECT BOXES ── */
 [data-baseweb="select"] {
     background: var(--bg-card) !important;
     border-radius: 8px !important;
 }
+[data-baseweb="select"] > div {
+    background: var(--bg-card) !important;
+    border-color: var(--border-subtle) !important;
+}
+[data-baseweb="select"] input,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {
+    color: var(--text-primary) !important;
+}
+[data-baseweb="select"] input::placeholder,
+[data-baseweb="input"] input::placeholder,
+[data-baseweb="textarea"] textarea::placeholder {
+    color: var(--text-muted) !important;
+}
 
 /* ── DOWNLOAD BUTTONS ── */
 .stDownloadButton > button {
-    background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(6,182,212,0.08)) !important;
-    border: 1px solid rgba(59,130,246,0.25) !important;
-    color: #60a5fa !important;
+    background: linear-gradient(135deg, var(--accent-blue-soft), var(--accent-cyan-soft)) !important;
+    border: 1px solid var(--accent-blue-border) !important;
+    color: var(--accent-blue) !important;
     border-radius: 8px !important;
     font-size: 0.85rem !important;
     font-weight: 600 !important;
@@ -948,11 +1180,11 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
     transition: all 0.2s ease !important;
 }
 .stDownloadButton > button:hover {
-    background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(6,182,212,0.15)) !important;
-    border-color: rgba(59,130,246,0.4) !important;
-    color: #93c5fd !important;
+    background: linear-gradient(135deg, rgba(37,99,235,0.2), rgba(8,145,178,0.18)) !important;
+    border-color: var(--accent-blue) !important;
+    color: var(--accent-blue) !important;
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(59,130,246,0.15) !important;
+    box-shadow: 0 4px 12px rgba(37,99,235,0.15) !important;
 }
 
 /* ── EXPANDER (Streamlit native fallback) ── */
@@ -982,6 +1214,7 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
     color: var(--text-primary);
     margin-bottom: 4px;
     letter-spacing: -0.02em;
+    font-family: var(--font-heading);
 }
 .section-subtitle {
     font-size: 0.9rem;
@@ -1018,41 +1251,236 @@ html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-deepest); }
-::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.6); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,0.9); }
+body.dark-theme ::-webkit-scrollbar-track { background: #0b1220; }
+body.dark-theme ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.5); }
+body.dark-theme ::-webkit-scrollbar-thumb:hover { background: rgba(203,213,225,0.7); }
 
 /* ── HIDE STREAMLIT DEFAULT FOOTER ── */
 footer {visibility: hidden;}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NATIVE STREAMLIT ELEMENT OVERRIDES
+   These are elements Streamlit hard-codes with light colours; we have to
+   target them explicitly so dark-theme is fully consistent.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Alert callouts: st.info / st.warning / st.error / st.success ── */
+[data-testid="stAlert"] {
+    border-radius: 8px !important;
+    border-left-width: 3px !important;
+}
+body.dark-theme [data-testid="stAlert"] {
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-subtle) !important;
+    color: var(--text-secondary) !important;
+}
+body.dark-theme [data-testid="stAlert"] p,
+body.dark-theme [data-testid="stAlert"] span,
+body.dark-theme [data-testid="stAlert"] div {
+    color: var(--text-secondary) !important;
+}
+/* re-apply the left-border accent colour in dark mode */
+body.dark-theme [data-testid="stAlertContainer"],
+body.dark-theme [data-baseweb="notification"] {
+    border-left-color: var(--accent-blue) !important;
+}
+
+/* ── Expander: full container + summary + content area ── */
+[data-testid="stExpander"] details {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stExpander"] details summary {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stExpander"] details summary:hover {
+    background: var(--bg-elevated) !important;
+}
+[data-testid="stExpander"] details[open] summary {
+    border-bottom: 1px solid var(--border-subtle) !important;
+    border-radius: 8px 8px 0 0 !important;
+}
+[data-testid="stExpander"] details > div {
+    background: var(--bg-card) !important;
+    color: var(--text-secondary) !important;
+}
+[data-testid="stExpander"] details > div p,
+[data-testid="stExpander"] details > div span,
+[data-testid="stExpander"] details > div label {
+    color: var(--text-secondary) !important;
+}
+
+/* ── Select / Multiselect: trigger container ── */
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    background: var(--bg-card) !important;
+    border-color: var(--border-subtle) !important;
+    color: var(--text-primary) !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"],
+[data-testid="stMultiSelect"] [data-baseweb="select"] [class*="placeholder"] {
+    color: var(--text-muted) !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] [data-baseweb="tag"],
+[data-testid="stMultiSelect"] [data-baseweb="select"] [data-baseweb="tag"] {
+    background: var(--chip-blue-bg) !important;
+    color: var(--chip-blue-text) !important;
+}
+
+/* ── Select / Multiselect: dropdown popup (rendered in a portal) ── */
+[data-baseweb="popover"],
+[data-baseweb="popover"] [data-baseweb="list"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-hover) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-card) !important;
+}
+[data-baseweb="option"] {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+}
+[data-baseweb="option"]:hover,
+[data-baseweb="option"][aria-selected="true"] {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ── Text inputs and number inputs ── */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+    caret-color: var(--accent-blue) !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus {
+    border-color: var(--accent-blue) !important;
+    box-shadow: 0 0 0 2px var(--accent-blue-soft) !important;
+}
+[data-baseweb="input"],
+[data-baseweb="textarea"] {
+    background: var(--bg-card) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* ── Native st.button ── */
+.stButton > button {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s ease !important;
+}
+.stButton > button:hover {
+    background: var(--bg-hover) !important;
+    border-color: var(--accent-blue) !important;
+    color: var(--accent-blue) !important;
+}
+.stButton > button[kind="primary"] {
+    background: var(--accent-blue) !important;
+    color: #ffffff !important;
+    border-color: var(--accent-blue) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    opacity: 0.9 !important;
+}
+
+/* ── st.metric ── */
+[data-testid="stMetric"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius) !important;
+    padding: 16px !important;
+}
+[data-testid="stMetric"] label {
+    color: var(--text-muted) !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+}
+[data-testid="stMetricDelta"] {
+    color: var(--accent-green) !important;
+}
+
+/* ── st.spinner ── */
+body.dark-theme [data-testid="stSpinner"] p,
+body.dark-theme .stSpinner p {
+    color: var(--text-secondary) !important;
+}
+body.dark-theme .stSpinner > div > div {
+    border-color: var(--bg-elevated) !important;
+    border-top-color: var(--accent-blue) !important;
+}
+
+/* ── Streamlit top toolbar / header (hamburger menu, theme button) ── */
+body.dark-theme [data-testid="stToolbar"],
+body.dark-theme [data-testid="stDecoration"] {
+    background: transparent !important;
+}
+body.dark-theme header[data-testid="stHeader"] {
+    background: rgba(11,18,32,0.85) !important;
+    backdrop-filter: blur(8px) !important;
+}
+
+/* ── Markdown code blocks and inline code ── */
+body.dark-theme code {
+    background: var(--bg-elevated) !important;
+    color: var(--accent-cyan) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+body.dark-theme pre {
+    background: var(--bg-elevated) !important;
+    border: 1px solid var(--border-subtle) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* ── Progress bar ── */
+[data-testid="stProgress"] > div > div {
+    background: var(--bg-elevated) !important;
+}
+[data-testid="stProgress"] > div > div > div {
+    background: var(--accent-blue) !important;
+}
+
+/* ── Ensure the main column / block containers inherit our background ── */
+body.dark-theme .main .block-container,
+body.dark-theme [data-testid="stMainBlockContainer"] {
+    background: transparent !important;
+}
+body.dark-theme section[data-testid="stSidebar"] {
+    background: var(--bg-sidebar) !important;
+}
 </style>
 """
 
-# JS: Replace Material Icons ligature text with inline SVGs
-ICON_FIX_JS = """
+# JS: Replace Material Icons ligature text with inline SVGs + apply theme override
+def build_icon_fix_js(theme_override: str) -> str:
+    override = "dark" if theme_override == "dark" else "light"
+    return f"""
 <script>
-(function() {
+(function() {{
+    var override = '{override}';
     /* Detect Streamlit light/dark theme and set body class */
-    function detectTheme() {
-        try {
+    function detectTheme() {{
+        try {{
             var doc = window.parent.document;
-            var el = doc.querySelector('[data-testid="stAppViewContainer"]')
-                     || doc.querySelector('.stApp')
-                     || doc.body;
-            var bg = window.parent.getComputedStyle(el).backgroundColor;
-            var m = bg.match(/\\d+/g);
-            if (m) {
-                var avg = (parseInt(m[0]) + parseInt(m[1]) + parseInt(m[2])) / 3;
-                if (avg < 128) {
-                    doc.body.classList.add('dark-theme');
-                    doc.body.classList.remove('light-theme');
-                } else {
-                    doc.body.classList.add('light-theme');
-                    doc.body.classList.remove('dark-theme');
-                }
-            }
-        } catch(e) {}
-    }
+            doc.body.setAttribute('data-theme-override', override);
+            doc.body.classList.toggle('light-theme', override === 'light');
+            doc.body.classList.toggle('dark-theme', override === 'dark');
+            return;
+        }} catch(e) {{}}
+    }}
 
-    var svgIcons = {
+    var svgIcons = {{
         'keyboard_double_arrow_left':
             '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" '
             + 'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" '
@@ -1063,9 +1491,9 @@ ICON_FIX_JS = """
             + 'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" '
             + 'stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/>'
             + '<polyline points="6 17 11 12 6 7"/></svg>',
-    };
-    function fixIcons() {
-        try {
+    }};
+    function fixIcons() {{
+        try {{
             var doc = window.parent.document;
             var pat = /^(keyboard_|arrow_|chevron_|expand_|navigate_|menu$|more_)/;
             var walker = doc.createTreeWalker(
@@ -1073,27 +1501,27 @@ ICON_FIX_JS = """
             );
             var nodes = [];
             while (walker.nextNode()) nodes.push(walker.currentNode);
-            nodes.forEach(function(node) {
+            nodes.forEach(function(node) {{
                 var txt = node.textContent.trim();
                 if (!txt || !pat.test(txt)) return;
                 var el = node.parentElement;
                 if (!el || el.tagName === 'BODY' || el.dataset.svgDone) return;
-                if (svgIcons[txt]) {
+                if (svgIcons[txt]) {{
                     el.innerHTML = svgIcons[txt];
                     el.style.display = 'inline-flex';
                     el.style.alignItems = 'center';
                     el.style.justifyContent = 'center';
-                } else {
+                }} else {{
                     el.style.display = 'none';
-                }
+                }}
                 el.dataset.svgDone = '1';
-            });
-        } catch(e) {}
-    }
+            }});
+        }} catch(e) {{}}
+    }}
     detectTheme();
     fixIcons();
-    setInterval(function() { detectTheme(); fixIcons(); }, 800);
-})();
+    setInterval(function() {{ detectTheme(); fixIcons(); }}, 800);
+}})();
 </script>
 """
 
@@ -1102,7 +1530,17 @@ ICON_FIX_JS = """
 # Streamlit App Layout
 # =====================================================================
 
+
 def main():
+    # What config.toml currently says — used as the "committed" theme on disk.
+    # After a reload this will match session_state so no further reload is triggered.
+    _config_theme = _read_config_theme()
+
+    # Seed session state from disk only on the very first run of this session
+    # (or after a page reload which clears session state).
+    if "theme_mode" not in st.session_state:
+        st.session_state.theme_mode = _config_theme
+
     st.set_page_config(
         page_title="MLOmics — Cancer Subtype Classifier",
         page_icon="🧬",
@@ -1110,28 +1548,55 @@ def main():
         initial_sidebar_state="expanded",
     )
 
+    # With key="theme_mode" on the radio below, Streamlit updates session_state
+    # *before* the rerun fires, so this read is always the current selection.
+    theme_mode = st.session_state.theme_mode
+    theme_tokens = get_theme_tokens("dark" if theme_mode == "Dark" else "light")
+
     # --- Inject CSS + JS ---
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-    components.html(ICON_FIX_JS, height=0, width=0)
+    theme_override = "light" if theme_mode == "Light" else "dark"
+    components.html(build_icon_fix_js(theme_override), height=0, width=0)
 
     # --- Sidebar ---
     with st.sidebar:
-        st.markdown('''
-<div style="padding: 8px 0 20px 0; border-bottom: 1px solid rgba(255,255,255,0.06); margin-bottom: 20px;">
-    <div style="font-size: 2rem; font-weight: 800; background: linear-gradient(135deg, #3b82f6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; letter-spacing: -0.03em; line-height: 1.1;">
-        🧬 MLOmics
-    </div>
-    <div style="font-size: 0.78rem; color: #64748b; margin-top: 6px; line-height: 1.4;">
+        st.markdown(
+            """
+<div class="sidebar-brand">
+    <div class="sidebar-logo">🧬 MLOmics</div>
+    <div class="sidebar-tagline">
         Latent-Fusion Multi-Omics<br>Cancer Subtype Classifier
     </div>
 </div>
-''', unsafe_allow_html=True)
+""",
+            unsafe_allow_html=True,
+        )
+
+        # key= ensures session_state["theme_mode"] is updated *before* the rerun,
+        # so the CSS/JS injection above already uses the correct value.
+        st.radio(
+            "Theme",
+            ["Light", "Dark"],
+            key="theme_mode",
+            horizontal=True,
+        )
+        theme_mode = st.session_state.theme_mode
+        theme_tokens = get_theme_tokens("dark" if theme_mode == "Dark" else "light")
+
+        # Persist preference to config.toml so the *next* server start begins
+        # with the matching Streamlit base theme (avoids flash-of-wrong-theme
+        # on cold load). Runtime theming is handled entirely by the CSS above —
+        # no browser reload required or performed.
+        if theme_mode != _config_theme:
+            _write_streamlit_config(theme_mode)
+
+        st.markdown("---")
 
         cancer_type = st.radio(
             "Cancer Type",
             ["GS-BRCA", "GS-COAD"],
             help="GS-BRCA: Breast cancer, 5 molecular subtypes. "
-                 "GS-COAD: Colon adenocarcinoma, 4 CMS subtypes.",
+            "GS-COAD: Colon adenocarcinoma, 4 CMS subtypes.",
         )
         if cancer_type == "GS-BRCA":
             st.caption("671 samples · 5 subtypes · 15,366 features")
@@ -1142,10 +1607,14 @@ def main():
 
         model_choice = st.radio(
             "Select Model",
-            ["XGBoost (Baseline)", "Intermediate Fusion (Deep)", "Pathway-Aware Fusion (Deep + Bio Prior)"],
+            [
+                "XGBoost (Baseline)",
+                "Intermediate Fusion (Deep)",
+                "Pathway-Aware Fusion (Deep + Bio Prior)",
+            ],
             help="XGBoost uses early fusion (concatenation). "
-                 "Intermediate Fusion uses per-modality encoders -> latent concat -> MLP. "
-                 "Pathway-Aware Fusion replaces the mRNA encoder with KEGG pathway-grouped attention.",
+            "Intermediate Fusion uses per-modality encoders -> latent concat -> MLP. "
+            "Pathway-Aware Fusion replaces the mRNA encoder with KEGG pathway-grouped attention.",
         )
 
         st.markdown("---")
@@ -1281,7 +1750,6 @@ def main():
     # TAB 1: PREDICTION
     # =================================================================
     with tab_predict:
-
         uploaded_file = st.file_uploader(
             "Choose a CSV file",
             type=["csv"],
@@ -1294,34 +1762,39 @@ def main():
             col_left, col_right = st.columns([3, 2], gap="large")
 
             with col_left:
-                st.markdown('''
-<div style="margin-bottom: 24px;">
-    <div style="font-size: 2.4rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1.15; margin-bottom: 12px;">
+                st.markdown(
+                    """
+<div class="hero-block">
+    <div class="hero-title">
         <span style="color: var(--text-primary);">Welcome to </span>
-        <span style="background: linear-gradient(135deg, #3b82f6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">MLOmics</span>
+        <span class="brand-gradient">MLOmics</span>
     </div>
-    <div style="font-size: 1rem; color: var(--text-secondary); line-height: 1.7; max-width: 520px;">
+    <div class="hero-subtitle">
         Upload a multi-omics CSV file to classify cancer subtypes using machine learning.
         The system supports tree-based (XGBoost) and deep learning (Intermediate Fusion,
         Pathway-Aware Fusion) models trained on the MLOmics benchmark dataset.
     </div>
 </div>
-''', unsafe_allow_html=True)
+""",
+                    unsafe_allow_html=True,
+                )
                 _mirna_count = cfg["modality_dims"].get("mirna", 366)
                 _n_subtypes = cfg.get("n_classes") or len(cfg.get("class_names", {}))
-                _total_feats = cfg.get("total_features", sum(cfg["modality_dims"].values()))
+                _total_feats = cfg.get(
+                    "total_features", sum(cfg["modality_dims"].values())
+                )
                 _suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
                 st.markdown(
-                    '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">'
-                    '<span style="background: rgba(59,130,246,0.12); color: #60a5fa; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">mRNA (5,000)</span>'
-                    '<span style="background: rgba(6,182,212,0.12); color: #22d3ee; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">miRNA ({mirna})</span>'
-                    '<span style="background: rgba(16,185,129,0.12); color: #34d399; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">Methylation (5,000)</span>'
-                    '<span style="background: rgba(245,158,11,0.12); color: #fbbf24; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">CNV (5,000)</span>'
-                    '</div>'
-                    '<div style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 20px;">'
-                    'Cancer type: <strong style="color: var(--text-secondary);">{ct}</strong>'
-                    ' — {nsub} molecular subtypes · {nfeat:,} total features'
-                    '</div>'.format(
+                    '<div class="chip-row">'
+                    '<span class="chip chip-blue">mRNA (5,000)</span>'
+                    '<span class="chip chip-cyan">miRNA ({mirna})</span>'
+                    '<span class="chip chip-green">Methylation (5,000)</span>'
+                    '<span class="chip chip-amber">CNV (5,000)</span>'
+                    "</div>"
+                    '<div class="chip-meta">'
+                    'Cancer type: <strong>{ct}</strong>'
+                    " — {nsub} molecular subtypes · {nfeat:,} total features"
+                    "</div>".format(
                         mirna=_mirna_count,
                         ct=cancer_type,
                         nsub=_n_subtypes,
@@ -1380,7 +1853,10 @@ def main():
 
                 # --- Predict ---
                 section_divider()
-                st.markdown('<div class="section-title">🎯 Prediction Results</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="section-title">🎯 Prediction Results</div>',
+                    unsafe_allow_html=True,
+                )
 
                 if model_choice == "XGBoost (Baseline)":
                     xgb_model = load_xgb_model(cancer_type)
@@ -1416,16 +1892,18 @@ def main():
                         render_prediction_card(sid, class_name, confidence)
 
                 # --- Export predictions ---
-                export_df = pd.DataFrame({
-                    "Sample": sample_ids,
-                    "Predicted Subtype": [
-                        cfg["class_names"].get(str(int(p)), f"Class {p}")
-                        for p in preds
-                    ],
-                    "Confidence": [
-                        float(probs[i, int(preds[i])]) for i in range(n_samples)
-                    ],
-                })
+                export_df = pd.DataFrame(
+                    {
+                        "Sample": sample_ids,
+                        "Predicted Subtype": [
+                            cfg["class_names"].get(str(int(p)), f"Class {p}")
+                            for p in preds
+                        ],
+                        "Confidence": [
+                            float(probs[i, int(preds[i])]) for i in range(n_samples)
+                        ],
+                    }
+                )
                 st.download_button(
                     "📥 Export predictions as CSV",
                     data=export_df.to_csv(index=False),
@@ -1435,7 +1913,10 @@ def main():
 
                 # --- Confidence chart ---
                 section_divider()
-                st.markdown('<div class="section-title">Confidence Distribution</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="section-title">Confidence Distribution</div>',
+                    unsafe_allow_html=True,
+                )
                 sample_to_explain = 0
                 if n_samples > 1:
                     sample_to_explain = st.selectbox(
@@ -1443,11 +1924,14 @@ def main():
                         range(n_samples),
                         format_func=lambda idx: sample_ids[idx],
                     )
-                render_confidence_chart(probs, cfg, sample_to_explain)
+                render_confidence_chart(probs, cfg, theme_tokens, sample_to_explain)
 
                 # --- SHAP Explanation ---
                 section_divider()
-                st.markdown('<div class="section-title">Feature Importance (SHAP)</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="section-title">Feature Importance (SHAP)</div>',
+                    unsafe_allow_html=True,
+                )
                 st.markdown(
                     "The waterfall plot shows which genomic features influenced "
                     "this prediction. **Red bars** push toward the predicted class; "
@@ -1474,7 +1958,7 @@ def main():
                     with st.spinner("Running TreeSHAP..."):
                         xgb_model = load_xgb_model(cancer_type)
                         render_shap_waterfall(
-                            xgb_model, X_scaled, cfg, sample_to_explain
+                            xgb_model, X_scaled, cfg, theme_tokens, sample_to_explain
                         )
                 else:
                     if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
@@ -1488,7 +1972,9 @@ def main():
 
                     if fusion_attr and selected_sid in fusion_attr["sample_ids"]:
                         attr_idx = fusion_attr["sample_ids"].index(selected_sid)
-                        top_feats = fusion_attr["top_features_per_sample"][attr_idx][:15]
+                        top_feats = fusion_attr["top_features_per_sample"][attr_idx][
+                            :15
+                        ]
                         top_feats_rev = list(reversed(top_feats))
 
                         fig_attr = go.Figure(
@@ -1497,10 +1983,14 @@ def main():
                                 y=[f["feature_name"] for f in top_feats_rev],
                                 orientation="h",
                                 marker_color=[
-                                    "#ef4444" if f["attribution"] > 0 else "#3b82f6"
+                                    theme_tokens["plotly_highlight"]
+                                    if f["attribution"] > 0
+                                    else theme_tokens["plotly_muted"]
                                     for f in top_feats_rev
                                 ],
-                                text=[f"{f['attribution']:+.4f}" for f in top_feats_rev],
+                                text=[
+                                    f"{f['attribution']:+.4f}" for f in top_feats_rev
+                                ],
                                 textposition="outside",
                                 textfont=dict(size=10),
                             )
@@ -1513,14 +2003,17 @@ def main():
                             xaxis_title="Attribution Score",
                             height=500,
                         )
-                        apply_dark_theme(fig_attr)
+                        apply_plotly_theme(fig_attr, theme_tokens)
                         st.plotly_chart(fig_attr, use_container_width=True)
 
                         mod_counts = {}
                         for f in fusion_attr["top_features_per_sample"][attr_idx][:20]:
-                            mod_counts[f["modality"]] = mod_counts.get(f["modality"], 0) + 1
+                            mod_counts[f["modality"]] = (
+                                mod_counts.get(f["modality"], 0) + 1
+                            )
                         mod_text = " · ".join(
-                            f"{m}: {c}" for m, c in sorted(mod_counts.items(), key=lambda x: -x[1])
+                            f"{m}: {c}"
+                            for m, c in sorted(mod_counts.items(), key=lambda x: -x[1])
                         )
                         st.caption(f"Top 20 features by modality: {mod_text}")
                         _attr_note = (
@@ -1558,7 +2051,10 @@ def main():
     # TAB 2: MODEL COMPARISON
     # =================================================================
     with tab_compare:
-        st.markdown('<div class="section-title">Model Performance Comparison</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-title">Model Performance Comparison</div>',
+            unsafe_allow_html=True,
+        )
         st.markdown(
             "Patient-level stratified 5-fold cross-validation across all "
             "trained models."
@@ -1575,7 +2071,9 @@ def main():
                 _ct_options.index(cancer_type) if cancer_type in _ct_options else 0
             )
             selected_cancer = st.selectbox(
-                "Filter by cancer type", _ct_options, index=_ct_default_idx,
+                "Filter by cancer type",
+                _ct_options,
+                index=_ct_default_idx,
                 key="comp_cancer_filter",
             )
 
@@ -1627,13 +2125,18 @@ def main():
                     unsafe_allow_html=True,
                 )
             with mc4:
-                if "auc_mean" in _banner_df.columns and _banner_df["auc_mean"].notna().any():
+                if (
+                    "auc_mean" in _banner_df.columns
+                    and _banner_df["auc_mean"].notna().any()
+                ):
                     best_auc_row = _banner_df.loc[_banner_df["auc_mean"].idxmax()]
                     st.markdown(
                         '<div class="metric-highlight">'
                         '<div class="metric-value">{:.3f}</div>'
                         '<div class="metric-label">Best AUC ({model})</div>'
-                        "</div>".format(best_auc_row["auc_mean"], model=best_auc_row["Model"]),
+                        "</div>".format(
+                            best_auc_row["auc_mean"], model=best_auc_row["Model"]
+                        ),
                         unsafe_allow_html=True,
                     )
                 else:
@@ -1653,7 +2156,8 @@ def main():
 
             # --- Styled table ---
             format_dict = {
-                c: "{:.3f}" for c in display_df.columns
+                c: "{:.3f}"
+                for c in display_df.columns
                 if c.endswith("_mean") or c.endswith("_std")
             }
             _highlight_cols = ["F1_mean", "Precision_mean", "Recall_mean"]
@@ -1662,7 +2166,7 @@ def main():
             st.dataframe(
                 display_df.style.format(format_dict).highlight_max(
                     subset=_highlight_cols,
-                    color="rgba(16,185,129,0.15)",
+                    color=theme_tokens["table_highlight"],
                 ),
                 use_container_width=True,
             )
@@ -1683,7 +2187,8 @@ def main():
             }
             # Only offer AUC option if the column exists
             _available_metrics = [
-                m for m in _metric_options
+                m
+                for m in _metric_options
                 if _metric_col_map[m][0] in display_df.columns
             ]
             _bar_metric = st.selectbox(
@@ -1724,35 +2229,52 @@ def main():
                 xaxis_title="Cancer Type",
                 height=480,
                 legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1,
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
                 ),
             )
-            apply_dark_theme(fig)
+            apply_plotly_theme(fig, theme_tokens)
             fig.update_traces(marker=dict(line=dict(width=0)))
             st.plotly_chart(fig, use_container_width=True)
 
             # --- ROC Curves ---
             st.markdown("#### ROC Curves")
-            st.caption("Micro-averaged OVR ROC curves for each model (best fold per model).")
+            st.caption(
+                "Micro-averaged OVR ROC curves for each model (best fold per model)."
+            )
             _roc_cancer = selected_cancer if selected_cancer != "All" else cancer_type
             _roc_models = {
                 "XGBoost": ("xgb", "brca" if "BRCA" in _roc_cancer else "coad"),
                 "RandomForest": ("rf", "brca" if "BRCA" in _roc_cancer else "coad"),
-                "IntermediateFusion": ("fusion", "brca" if "BRCA" in _roc_cancer else "coad"),
-                "PathwayAwareFusion": ("pathway_fusion", "brca" if "BRCA" in _roc_cancer else "coad"),
+                "IntermediateFusion": (
+                    "fusion",
+                    "brca" if "BRCA" in _roc_cancer else "coad",
+                ),
+                "PathwayAwareFusion": (
+                    "pathway_fusion",
+                    "brca" if "BRCA" in _roc_cancer else "coad",
+                ),
             }
             # Find best fold for each model using metrics CSVs
             _roc_best_folds = {}
             for _rm, (_key, _suf) in _roc_models.items():
-                _m_path = os.path.join(RESULTS_DIR, "metrics", f"{_key}_{_suf}_metrics.csv")
+                _m_path = os.path.join(
+                    RESULTS_DIR, "metrics", f"{_key}_{_suf}_metrics.csv"
+                )
                 if os.path.exists(_m_path):
                     _mdf = pd.read_csv(_m_path)
                     _mdf["f1"] = pd.to_numeric(_mdf["f1"], errors="coerce")
                     _mdf = _mdf.dropna(subset=["f1"])
-                    _mdf = _mdf[~_mdf["fold"].astype(str).str.contains(r"\+/-", na=False)]
+                    _mdf = _mdf[
+                        ~_mdf["fold"].astype(str).str.contains(r"\+/-", na=False)
+                    ]
                     if len(_mdf) > 0:
-                        _roc_best_folds[_rm] = int(_mdf.loc[_mdf["f1"].idxmax(), "fold"])
+                        _roc_best_folds[_rm] = int(
+                            _mdf.loc[_mdf["f1"].idxmax(), "fold"]
+                        )
 
             try:
                 from sklearn.preprocessing import label_binarize
@@ -1760,9 +2282,14 @@ def main():
 
                 fig_roc = go.Figure()
                 fig_roc.add_trace(
-                    go.Scatter(x=[0, 1], y=[0, 1], mode="lines",
-                               line=dict(dash="dash", color="rgba(128,128,128,0.4)"),
-                               showlegend=False, name="Random")
+                    go.Scatter(
+                        x=[0, 1],
+                        y=[0, 1],
+                        mode="lines",
+                        line=dict(dash="dash", color=theme_tokens["plotly_axis"]),
+                        showlegend=False,
+                        name="Random",
+                    )
                 )
                 _roc_colors = CHART_COLORS[:4]
                 for _ci, (_rm, (_key, _suf)) in enumerate(_roc_models.items()):
@@ -1770,7 +2297,9 @@ def main():
                     if _fold is None:
                         continue
                     _npz_path = os.path.join(
-                        RESULTS_DIR, "metrics", f"{_key}_{_suf}_fold{_fold}_predictions.npz"
+                        RESULTS_DIR,
+                        "metrics",
+                        f"{_key}_{_suf}_fold{_fold}_predictions.npz",
                     )
                     if not os.path.exists(_npz_path):
                         continue
@@ -1787,9 +2316,13 @@ def main():
                     _roc_auc = sk_auc(_fpr, _tpr)
                     fig_roc.add_trace(
                         go.Scatter(
-                            x=_fpr, y=_tpr, mode="lines",
+                            x=_fpr,
+                            y=_tpr,
+                            mode="lines",
                             name=f"{_rm} (AUC={_roc_auc:.3f})",
-                            line=dict(color=_roc_colors[_ci % len(_roc_colors)], width=2),
+                            line=dict(
+                                color=_roc_colors[_ci % len(_roc_colors)], width=2
+                            ),
                         )
                     )
                 fig_roc.update_layout(
@@ -1797,10 +2330,11 @@ def main():
                     xaxis_title="False Positive Rate",
                     yaxis_title="True Positive Rate",
                     height=460,
-                    legend=dict(orientation="h", yanchor="top", y=-0.12,
-                                xanchor="center", x=0.5),
+                    legend=dict(
+                        orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5
+                    ),
                 )
-                apply_dark_theme(fig_roc)
+                apply_plotly_theme(fig_roc, theme_tokens)
                 st.plotly_chart(fig_roc, use_container_width=True)
             except Exception as _roc_err:
                 st.info(f"ROC curves unavailable: {_roc_err}")
@@ -1830,18 +2364,18 @@ def main():
             # --- Radar chart ---
             st.markdown("#### Multi-Metric Profile")
             metric_cols = [
-                "Precision_mean", "Recall_mean", "F1_mean",
-                "NMI_mean", "ARI_mean",
+                "Precision_mean",
+                "Recall_mean",
+                "F1_mean",
+                "NMI_mean",
+                "ARI_mean",
             ]
             metric_labels = ["Precision", "Recall", "F1", "NMI", "ARI"]
             if "auc_mean" in comp_df.columns:
                 metric_cols.append("auc_mean")
                 metric_labels.append("AUC")
 
-            radar_cancer = (
-                selected_cancer if selected_cancer != "All"
-                else cancer_type
-            )
+            radar_cancer = selected_cancer if selected_cancer != "All" else cancer_type
             radar_df = comp_df[comp_df["Cancer"] == radar_cancer]
 
             if len(radar_df) == 0:
@@ -1860,22 +2394,21 @@ def main():
                             fill="toself",
                             name=model_name,
                             opacity=0.6,
-                            line=dict(
-                                color=CHART_COLORS[i % len(CHART_COLORS)]
-                            ),
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)]),
                         )
                     )
 
                 fig_radar.update_layout(
                     polar=dict(
                         radialaxis=dict(
-                            visible=True, range=[0, 1],
-                            gridcolor="rgba(128,128,128,0.2)",
-                            color="#64748b",
+                            visible=True,
+                            range=[0, 1],
+                            gridcolor=theme_tokens["plotly_grid"],
+                            color=theme_tokens["plotly_font"],
                         ),
                         angularaxis=dict(
-                            gridcolor="rgba(128,128,128,0.2)",
-                            color="#64748b",
+                            gridcolor=theme_tokens["plotly_grid"],
+                            color=theme_tokens["plotly_font"],
                         ),
                         bgcolor="rgba(0,0,0,0)",
                     ),
@@ -1885,14 +2418,16 @@ def main():
                         font=dict(size=15),
                     ),
                     legend=dict(
-                        orientation='h',
-                        yanchor='top', y=-0.15,
-                        xanchor='center', x=0.5,
+                        orientation="h",
+                        yanchor="top",
+                        y=-0.15,
+                        xanchor="center",
+                        x=0.5,
                         font=dict(size=11),
                     ),
                     margin=dict(t=40, b=80, l=80, r=80),
                 )
-                apply_dark_theme(fig_radar)
+                apply_plotly_theme(fig_radar, theme_tokens)
                 if selected_cancer == "All":
                     st.caption(
                         f"Showing {cancer_type} (matches sidebar). "
@@ -1928,53 +2463,79 @@ def main():
                 cn_map.get(str(int(l)), f"Class {int(l)}") for l in cl["true_labels"]
             ]
             correct = [
-                int(t) == int(p) for t, p in zip(cl["true_labels"], cl["predicted_labels"])
+                int(t) == int(p)
+                for t, p in zip(cl["true_labels"], cl["predicted_labels"])
             ]
             n_ok = sum(correct)
             n_tot = len(correct)
 
             lc1, lc2 = st.columns(2)
             with lc1:
-                df1 = pd.DataFrame({"x": coords["x"], "y": coords["y"], "Subtype": label_names})
+                df1 = pd.DataFrame(
+                    {"x": coords["x"], "y": coords["y"], "Subtype": label_names}
+                )
                 fig1 = px.scatter(
-                    df1, x="x", y="y", color="Subtype",
+                    df1,
+                    x="x",
+                    y="y",
+                    color="Subtype",
                     title=f"{lat_method} — True Subtype",
                     color_discrete_sequence=CHART_COLORS,
                 )
                 fig1.update_traces(marker=dict(size=7, opacity=0.8))
                 fig1.update_layout(
-                    xaxis_title=f"{lat_method}-1", yaxis_title=f"{lat_method}-2",
+                    xaxis_title=f"{lat_method}-1",
+                    yaxis_title=f"{lat_method}-2",
                     height=450,
-                    legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
+                    legend=dict(
+                        orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5
+                    ),
                 )
-                apply_dark_theme(fig1)
+                apply_plotly_theme(fig1, theme_tokens)
                 st.plotly_chart(fig1, use_container_width=True)
 
             with lc2:
                 acc_labels = ["Correct" if c else "Misclassified" for c in correct]
-                pred_names = [cn_map.get(str(int(p)), f"Class {int(p)}") for p in cl["predicted_labels"]]
-                df2 = pd.DataFrame({
-                    "x": coords["x"], "y": coords["y"],
-                    "Result": acc_labels, "True": label_names, "Predicted": pred_names,
-                })
+                pred_names = [
+                    cn_map.get(str(int(p)), f"Class {int(p)}")
+                    for p in cl["predicted_labels"]
+                ]
+                df2 = pd.DataFrame(
+                    {
+                        "x": coords["x"],
+                        "y": coords["y"],
+                        "Result": acc_labels,
+                        "True": label_names,
+                        "Predicted": pred_names,
+                    }
+                )
                 fig2 = px.scatter(
-                    df2, x="x", y="y", color="Result",
+                    df2,
+                    x="x",
+                    y="y",
+                    color="Result",
                     title=f"{lat_method} — Correct vs Misclassified ({n_ok}/{n_tot})",
-                    color_discrete_map={"Correct": "#10b981", "Misclassified": "#ef4444"},
+                    color_discrete_map={
+                        "Correct": theme_tokens["plotly_green"],
+                        "Misclassified": theme_tokens["plotly_red"],
+                    },
                     hover_data=["True", "Predicted"],
                 )
                 fig2.update_traces(marker=dict(size=7, opacity=0.8))
                 fig2.update_layout(
-                    xaxis_title=f"{lat_method}-1", yaxis_title=f"{lat_method}-2",
+                    xaxis_title=f"{lat_method}-1",
+                    yaxis_title=f"{lat_method}-2",
                     height=450,
-                    legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
+                    legend=dict(
+                        orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5
+                    ),
                 )
-                apply_dark_theme(fig2)
+                apply_plotly_theme(fig2, theme_tokens)
                 st.plotly_chart(fig2, use_container_width=True)
 
             st.caption(
                 f"Latent: {cl['latent_dim']}D projected to 2D via {lat_method}. "
-                f"Fold {cl['fold']} (best F1). Accuracy: {n_ok}/{n_tot} ({n_ok/n_tot:.1%})."
+                f"Fold {cl['fold']} (best F1). Accuracy: {n_ok}/{n_tot} ({n_ok / n_tot:.1%})."
             )
         else:
             st.info(
@@ -1998,17 +2559,24 @@ def main():
 
         _tc_opts = ["GS-BRCA", "GS-COAD"]
         tc_cancer = st.selectbox(
-            "Cancer type", _tc_opts,
+            "Cancer type",
+            _tc_opts,
             index=_tc_opts.index(cancer_type),
             key="tc_cancer",
         )
         cancer_key = tc_cancer.replace("GS-", "")
         tc_files = sorted(
-            _glob.glob(os.path.join(RESULTS_DIR, "plots", f"*fusion*training*{cancer_key}*.png"))
+            _glob.glob(
+                os.path.join(
+                    RESULTS_DIR, "plots", f"*fusion*training*{cancer_key}*.png"
+                )
+            )
         )
         if tc_files:
             for tf in tc_files:
-                label = os.path.basename(tf).replace(".png", "").replace("_", " ").title()
+                label = (
+                    os.path.basename(tf).replace(".png", "").replace("_", " ").title()
+                )
                 st.image(tf, caption=label)
             st.caption(
                 "Mild train < val loss gap is expected and controlled by dropout + early stopping."
@@ -2024,7 +2592,9 @@ def main():
             '<div class="section-title">Confusion Matrices</div>',
             unsafe_allow_html=True,
         )
-        st.caption("Best-fold confusion matrices showing per-class prediction accuracy.")
+        st.caption(
+            "Best-fold confusion matrices showing per-class prediction accuracy."
+        )
 
         cm_c1, cm_c2 = st.columns(2)
         with cm_c1:
@@ -2066,9 +2636,7 @@ def main():
             '<div class="section-title">Biological Validation</div>',
             unsafe_allow_html=True,
         )
-        st.caption(
-            "KEGG and GO pathway enrichment on top model-derived features."
-        )
+        st.caption("KEGG and GO pathway enrichment on top model-derived features.")
 
         enrichment = load_enrichment_results()
         if enrichment:
@@ -2155,9 +2723,9 @@ def main():
                             ["pathway", "mean_attention_weight"]
                         ].copy()
                         top_attn.columns = ["Pathway", "Attention Weight"]
-                        top_attn["Attention Weight"] = top_attn["Attention Weight"].apply(
-                            lambda x: f"{x:.5f}"
-                        )
+                        top_attn["Attention Weight"] = top_attn[
+                            "Attention Weight"
+                        ].apply(lambda x: f"{x:.5f}")
                         st.dataframe(
                             top_attn, use_container_width=True, hide_index=True
                         )
@@ -2201,7 +2769,7 @@ def main():
                 yaxis_title="F1 Score",
                 height=400,
             )
-            apply_dark_theme(fig_abl)
+            apply_plotly_theme(fig_abl, theme_tokens)
             fig_abl.update_traces(marker=dict(line=dict(width=0)))
             st.plotly_chart(fig_abl, use_container_width=True)
             st.caption(
@@ -2209,11 +2777,19 @@ def main():
                 "Larger drop = more important modality."
             )
 
-        fcomp_path = os.path.join(RESULTS_DIR, "metrics", "ablation_fusion_comparison.csv")
+        fcomp_path = os.path.join(
+            RESULTS_DIR, "metrics", "ablation_fusion_comparison.csv"
+        )
         if os.path.exists(fcomp_path):
             st.markdown("**Early vs Intermediate Fusion:**")
             fcomp_df = pd.read_csv(fcomp_path)
-            fmt = {c: "{:.3f}" for c in fcomp_df.columns if c.startswith("f1") or c.startswith("precision") or c.startswith("recall")}
+            fmt = {
+                c: "{:.3f}"
+                for c in fcomp_df.columns
+                if c.startswith("f1")
+                or c.startswith("precision")
+                or c.startswith("recall")
+            }
             st.dataframe(
                 fcomp_df.style.format(fmt),
                 use_container_width=True,
@@ -2221,8 +2797,12 @@ def main():
             )
 
         # Missing Modality Robustness
-        missing_csv_path = os.path.join(RESULTS_DIR, "metrics", "ablation_missing_modality.csv")
-        missing_img_path = os.path.join(RESULTS_DIR, "plots", "missing_modality_curve.png")
+        missing_csv_path = os.path.join(
+            RESULTS_DIR, "metrics", "ablation_missing_modality.csv"
+        )
+        missing_img_path = os.path.join(
+            RESULTS_DIR, "plots", "missing_modality_curve.png"
+        )
         if os.path.exists(missing_csv_path):
             section_divider()
             st.markdown("#### Missing Modality Robustness")
@@ -2236,7 +2816,9 @@ def main():
                 # Build interactive Plotly chart from CSV
                 fig_mm = go.Figure()
                 for cancer_val in _mm_df["cancer"].unique():
-                    cdata = _mm_df[_mm_df["cancer"] == cancer_val].sort_values("missing_rate")
+                    cdata = _mm_df[_mm_df["cancer"] == cancer_val].sort_values(
+                        "missing_rate"
+                    )
                     fig_mm.add_trace(
                         go.Scatter(
                             name=f"GS-{cancer_val}",
@@ -2256,7 +2838,7 @@ def main():
                     yaxis_title="F1 Score",
                     height=380,
                 )
-                apply_dark_theme(fig_mm)
+                apply_plotly_theme(fig_mm, theme_tokens)
                 st.plotly_chart(fig_mm, use_container_width=True)
             st.caption(
                 "BRCA shows robustness up to 20% missingness. "

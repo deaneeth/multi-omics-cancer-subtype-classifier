@@ -1,5 +1,6 @@
 {
   "cancer_type": "GS-BRCA",
+  "model_type": "IntermediateFusion",
   "sample_ids": [
     "TCGA.3C.AAAU.01",
     "TCGA.3C.AALI.01",
