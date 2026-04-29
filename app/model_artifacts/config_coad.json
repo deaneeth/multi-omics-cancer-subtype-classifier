@@ -15216,6 +15216,18 @@
     "cnv_ENSG00000281613"
   ],
   "total_features": 15200,
+  "modality_names": [
+    "mrna",
+    "mirna",
+    "methy",
+    "cnv"
+  ],
+  "modality_sizes": {
+    "mrna": 5000,
+    "mirna": 200,
+    "methy": 5000,
+    "cnv": 5000
+  },
   "modality_dims": {
     "mrna": 5000,
     "mirna": 200,
