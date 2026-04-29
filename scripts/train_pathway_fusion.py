@@ -42,7 +42,14 @@ from src.evaluation import (
 )
 from src.models import MultiOmicsDataset, PathwayAwareFusionModel
 from src.preprocessing import load_cv_folds, prepare_fold_data
-from src.utils import get_device, load_config, log_experiment, set_seeds
+from src.utils import (
+    compute_class_weights,
+    dataframes_to_numpy,
+    get_device,
+    load_config,
+    log_experiment,
+    set_seeds,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,19 +59,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers (reused from train_fusion.py)
+# Helpers
 # ---------------------------------------------------------------------------
-
-def compute_class_weights(y_train: np.ndarray, device: torch.device) -> torch.Tensor:
-    classes, counts = np.unique(y_train, return_counts=True)
-    weights = 1.0 / counts.astype(np.float64)
-    weights = weights / weights.sum() * len(classes)
-    return torch.tensor(weights, dtype=torch.float32, device=device)
-
-
-def dataframes_to_numpy(data_dict: dict) -> dict:
-    return {name: df.values.astype(np.float32) for name, df in data_dict.items()}
-
 
 def load_pathway_mapping(cancer_type: str) -> tuple:
     """Load KEGG pathway mapping for a specific cancer type.
