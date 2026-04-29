@@ -68,6 +68,35 @@ def test_prepare_fold_data_toy_has_no_nan(config: dict, toy_brca_fold: dict) -> 
         assert int(prepared["X_val"][modality].isna().sum().sum()) == 0
 
 
+def test_scaler_fitted_on_train_only_val_not_centered() -> None:
+    """Val data mean must not be zero — the scaler was fit on train, not val."""
+    rng = np.random.default_rng(0)
+    train = pd.DataFrame(
+        rng.normal(loc=0, scale=1, size=(20, 3)).astype(np.float64),
+        columns=["f1", "f2", "f3"],
+        index=[f"train_{i}" for i in range(20)],
+    )
+    # Val drawn from a shifted distribution so its mean ≠ 0 after train-only scaling
+    val = pd.DataFrame(
+        rng.normal(loc=5, scale=1, size=(10, 3)).astype(np.float64),
+        columns=["f1", "f2", "f3"],
+        index=[f"val_{i}" for i in range(10)],
+    )
+    train_dict = {name: train.copy() for name in MODALITY_KEYS}
+    val_dict = {name: val.copy() for name in MODALITY_KEYS}
+
+    scaler = PerModalityScaler()
+    scaler.fit(train_dict, MODALITY_KEYS)
+    scaled_val = scaler.transform(val_dict, MODALITY_KEYS)
+
+    for modality in MODALITY_KEYS:
+        val_means = scaled_val[modality].mean(axis=0).values
+        # If scaler were fit on val, means would be ~0; fit on train, they should be ~5
+        assert not np.allclose(val_means, np.zeros_like(val_means), atol=1.0), (
+            f"{modality}: val means near zero implies scaler was fit on val data"
+        )
+
+
 def test_concatenate_modalities_returns_prefixed_feature_names() -> None:
     x_dict = {
         "mrna": pd.DataFrame([[1.0, 2.0], [3.0, 4.0]], columns=["g1", "g2"]),
