@@ -35,6 +35,62 @@ RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 _STREAMLIT_CONFIG_DIR = os.path.join(PROJECT_ROOT, ".streamlit")
 _STREAMLIT_CONFIG_FILE = os.path.join(_STREAMLIT_CONFIG_DIR, "config.toml")
 
+
+def _is_placeholder_env_value(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    return (
+        not normalized
+        or normalized in {"your_groq_api_key_here", "gsk_your_key_here"}
+        or normalized.startswith("your_")
+    )
+
+
+def _read_env_value_from_file(env_path: str, key_name: str) -> str:
+    if not os.path.exists(env_path):
+        return ""
+
+    try:
+        with open(env_path, encoding="utf-8") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                if key.strip() != key_name:
+                    continue
+                value = value.strip().strip('"').strip("'")
+                return "" if _is_placeholder_env_value(value) else value
+    except OSError as e:
+        print(f"[LLM summary] Could not read {os.path.basename(env_path)}: {e}")
+
+    return ""
+
+
+def get_groq_api_key() -> str:
+    """
+    Return GROQ_API_KEY from the process environment, falling back to local
+    .env files for Streamlit runs launched from an IDE.
+    """
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not _is_placeholder_env_value(api_key):
+        return api_key
+
+    for env_name in [".env", ".env.local"]:
+        api_key = _read_env_value_from_file(
+            os.path.join(PROJECT_ROOT, env_name), "GROQ_API_KEY"
+        )
+        if api_key:
+            os.environ["GROQ_API_KEY"] = api_key
+            return api_key
+
+    os.environ.pop("GROQ_API_KEY", None)
+    return ""
+
 # ── Per-theme Streamlit config.toml content ──────────────────────────────────
 # Colors mirror the CSS design-token variables so native Streamlit widgets
 # (radio buttons, inputs, etc.) render in the same palette as the custom CSS.
@@ -90,6 +146,9 @@ PLOTLY_FONT = f"{FONT_BODY}, sans-serif"
 
 # Consistent chart color palette (no purple for clinical light theme)
 CHART_COLORS = ["#3b82f6", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#14b8a6"]
+GROQ_PRIMARY_MODEL = "llama-3.3-70b-versatile"
+GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"
+GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def get_theme_tokens(theme: str) -> dict:
@@ -129,22 +188,37 @@ def load_config_json(cancer_type: str = "GS-BRCA"):
     """Load demo configuration (feature names, class labels, modality dims)."""
     suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
     path = os.path.join(ARTIFACT_DIR, f"config_{suffix}.json")
+    if not os.path.exists(path):
+        path = os.path.join(ARTIFACT_DIR, "config.json")
     with open(path) as f:
         return json.load(f)
 
 
+def _artifact_suffix(cancer_type: str) -> str:
+    return "brca" if cancer_type == "GS-BRCA" else "coad"
+
+
+def _artifact_with_fallback(cancer_type: str, stem: str, ext: str) -> str:
+    suffix_path = os.path.join(ARTIFACT_DIR, f"{stem}_{_artifact_suffix(cancer_type)}.{ext}")
+    if os.path.exists(suffix_path):
+        return suffix_path
+    return os.path.join(ARTIFACT_DIR, f"{stem}.{ext}")
+
+
 @st.cache_resource
-def load_scaler(cancer_type: str = "GS-BRCA"):
-    """Load the plain StandardScaler fitted on concatenated training data."""
-    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
-    return joblib.load(os.path.join(ARTIFACT_DIR, f"scaler_{suffix}.pkl"))
+def load_demo_artifacts(cancer_type: str = "GS-BRCA"):
+    """Load train-fitted preprocessing + XGBoost artifacts for the selected cancer."""
+    imputer = joblib.load(_artifact_with_fallback(cancer_type, "imputer", "pkl"))
+    scaler = joblib.load(_artifact_with_fallback(cancer_type, "per_modality_scaler", "pkl"))
+    model = joblib.load(_artifact_with_fallback(cancer_type, "xgb_best", "pkl"))
+    cfg = load_config_json(cancer_type)
+    return imputer, scaler, model, cfg
 
 
 @st.cache_resource
 def load_xgb_model(cancer_type: str = "GS-BRCA"):
     """Load the best XGBoost model."""
-    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
-    return joblib.load(os.path.join(ARTIFACT_DIR, f"xgb_best_{suffix}.pkl"))
+    return joblib.load(_artifact_with_fallback(cancer_type, "xgb_best", "pkl"))
 
 
 @st.cache_resource
@@ -275,6 +349,110 @@ def load_enrichment_results():
 # =====================================================================
 
 
+def normalize_uploaded_dataframe(uploaded_file, expected_features: list[str]) -> pd.DataFrame:
+    """Read CSV upload and coerce it to samples x prefixed-feature columns.
+
+    Handles three formats:
+    1. Standard: columns are already feature names (index becomes 0, 1, …)
+    2. Sample-ID leading column: first column is a sample ID (TCGA.XX…), rest
+       are feature columns — first column becomes the DataFrame index so TCGA
+       IDs are preserved for attribution lookup.
+    3. Legacy transposed: first column contains feature names, rows are samples.
+    """
+    uploaded_file.seek(0)
+    df = pd.read_csv(uploaded_file)
+    if df.empty:
+        raise ValueError("Uploaded CSV is empty.")
+
+    df.columns = df.columns.astype(str)
+    expected_set = set(expected_features)
+
+    # If the first column is NOT a feature name, it may be sample IDs or the
+    # legacy transposed feature-name column.
+    if df.columns[0] not in expected_set and len(df.columns) > 1:
+        first_col = str(df.columns[0])
+        first_col_values = set(df[first_col].astype(str).tolist())
+
+        if expected_set.issubset(first_col_values):
+            # Legacy transposed format: first column holds feature names
+            df_t = df.set_index(first_col).T
+            df_t.columns = df_t.columns.astype(str)
+            return df_t
+
+        # Sample-ID column: promote to index so TCGA IDs survive into sample_ids
+        df = df.set_index(first_col)
+        df.index.name = "sample_id"
+        df.columns = df.columns.astype(str)
+
+    # Standard format: expected feature columns are present
+    if expected_set.issubset(set(df.columns)):
+        return df
+
+    return df
+
+
+def preprocess_uploaded_csv(df_raw: pd.DataFrame, cfg: dict, cancer_type: str) -> np.ndarray:
+    """
+    Preprocess uploaded samples with the exact train-fitted imputer/scaler pipeline.
+    """
+    imputer, scaler, _, _ = load_demo_artifacts(cancer_type)
+
+    modality_names = cfg.get("modality_names", cfg.get("modality_order", []))
+    modality_sizes = cfg.get("modality_sizes", cfg.get("modality_dims", {}))
+    feature_names = cfg["feature_names"]
+
+    uploaded_cols = set(df_raw.columns.astype(str).tolist())
+    expected_cols = set(feature_names)
+
+    missing = sorted(expected_cols - uploaded_cols)
+    extra = sorted(uploaded_cols - expected_cols)
+
+    if missing:
+        raise ValueError(
+            f"Uploaded file is missing {len(missing)} expected features. "
+            f"First 5 missing: {missing[:5]}. "
+            "Use the provided sample CSV as a template."
+        )
+    if extra:
+        st.warning(
+            f"Uploaded file has {len(extra)} unexpected columns. They will be ignored."
+        )
+
+    df_aligned = (
+        df_raw.reindex(columns=feature_names)
+        .apply(pd.to_numeric, errors="coerce")
+    )
+
+    data_dict = {}
+    start = 0
+    for mod in modality_names:
+        if mod not in modality_sizes:
+            raise ValueError(f"Config missing modality size for '{mod}'.")
+        size = int(modality_sizes[mod])
+        cols = feature_names[start : start + size]
+        if len(cols) != size:
+            raise ValueError(
+                f"Feature boundary mismatch for modality '{mod}'. "
+                f"Expected {size} columns, found {len(cols)}."
+            )
+        raw_cols = [c.split("_", 1)[1] if "_" in c else c for c in cols]
+        data_dict[mod] = pd.DataFrame(
+            df_aligned.iloc[:, start : start + size].values,
+            index=df_aligned.index,
+            columns=raw_cols,
+        )
+        start += size
+
+    if start != len(feature_names):
+        raise ValueError(
+            f"Config modality sizes sum to {start}, expected {len(feature_names)}."
+        )
+
+    imputed = imputer.transform(data_dict, modality_names)
+    scaled = scaler.transform(imputed, modality_names)
+    return np.concatenate([scaled[m].values for m in modality_names], axis=1)
+
+
 def split_by_modality(X_concat: np.ndarray, cfg: dict) -> dict:
     """Split concatenated feature array into per-modality dict using config."""
     modality_order = cfg["modality_order"]
@@ -314,16 +492,19 @@ def predict_fusion(model, X_scaled: np.ndarray, cfg: dict):
 def compute_shap_explanation(model, X_scaled: np.ndarray, sample_idx: int = 0):
     """Compute TreeSHAP for XGBoost. Returns shap.Explanation for the predicted class."""
     explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_scaled)
+    # Compute SHAP only for the requested sample to avoid O(n_samples) cost on
+    # multi-row uploads.
+    sample_row = X_scaled[sample_idx : sample_idx + 1]
+    shap_values = explainer.shap_values(sample_row)
 
     pred_class = np.argmax(
-        model.predict_proba(X_scaled[sample_idx : sample_idx + 1]), axis=1
+        model.predict_proba(sample_row), axis=1
     )[0]
 
     if isinstance(shap_values, list):
-        sv = shap_values[pred_class][sample_idx]
+        sv = shap_values[pred_class][0]
     else:
-        sv = shap_values[sample_idx, :, pred_class]
+        sv = shap_values[0, :, pred_class]
 
     base_val = explainer.expected_value
     if isinstance(base_val, (np.ndarray, list)):
@@ -334,6 +515,178 @@ def compute_shap_explanation(model, X_scaled: np.ndarray, sample_idx: int = 0):
         base_values=float(base_val),
         data=X_scaled[sample_idx],
     )
+
+
+def _call_groq_chat_completion(
+    api_key: str,
+    model_name: str,
+    prompt: str,
+    max_tokens: int = 350,
+    temperature: float = 0.3,
+) -> str:
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    try:
+        from groq import Groq
+
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(**payload)
+        return response.choices[0].message.content.strip()
+    except ModuleNotFoundError:
+        import requests
+
+        response = requests.post(
+            GROQ_CHAT_COMPLETIONS_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+
+def generate_research_summary(
+    cancer_type: str,
+    predicted_class: str,
+    confidence: float,
+    all_proba: dict,
+    top_shap_features: list,
+    top_pathways: list,
+    model_type: str,
+) -> str:
+    """
+    Call Groq API to generate a plain-English research summary.
+    Returns summary string, or empty string if API unavailable.
+    """
+    get_groq_api_key()
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return ""
+
+    def format_feature(feat_name: str) -> str:
+        modality_labels = {
+            "mrna": "mRNA",
+            "mirna": "miRNA",
+            "methy": "DNA methylation",
+            "cnv": "CNV",
+        }
+        parts = feat_name.split("_", 1)
+        if len(parts) == 2:
+            modality, gene = parts
+            return f"{gene} ({modality_labels.get(modality.lower(), modality.upper())})"
+        return feat_name
+
+    try:
+        top_features_text = "\n".join(
+            [
+                f"  - {format_feature(f['feature'])}: "
+                f"{'increased' if f['direction'] == 'positive' else 'decreased'} "
+                f"prediction (importance score: {f['importance']:.3f})"
+                for f in top_shap_features[:8]
+            ]
+        )
+        if not top_features_text:
+            top_features_text = "  - No sample-level feature attribution was available."
+
+        all_proba_text = "\n".join(
+            [
+                f"  - {cls}: {prob:.1%}"
+                for cls, prob in sorted(
+                    all_proba.items(), key=lambda x: x[1], reverse=True
+                )
+            ]
+        )
+
+        pathway_text = (
+            "Enriched pathways: " + ", ".join(top_pathways[:5])
+            if top_pathways
+            else "No statistically significant pathway enrichment detected."
+        )
+
+        prompt = f"""You are a bioinformatics research assistant helping
+explain machine learning results to a non-expert academic audience.
+Write a clear, factual, 3-paragraph research summary of these results.
+
+STRICT RULES:
+- Use research/academic language only
+- NEVER make clinical recommendations
+- NEVER say "this patient has cancer" or suggest treatment
+- NEVER claim these results are diagnostically valid
+- Always frame findings as "the model predicted" not "the patient has"
+- Keep each paragraph to 2-3 sentences maximum
+- If a gene/pathway is biologically relevant, briefly explain why
+
+RESULTS TO SUMMARISE:
+Cancer type studied: {cancer_type}
+Model used: {model_type}
+Predicted subtype: {predicted_class} (confidence: {confidence:.1%})
+
+All subtype probabilities:
+{all_proba_text}
+
+Top features driving this prediction (SHAP or attribution analysis):
+{top_features_text}
+
+Biological pathway analysis:
+{pathway_text}
+
+WRITE THREE SHORT PARAGRAPHS:
+Paragraph 1: What the model predicted and how confident it was.
+Paragraph 2: Which molecular features drove the prediction and
+             what they suggest biologically (briefly).
+Paragraph 3: What the pathway findings indicate, or if no pathways
+             were enriched, what that means for this sample.
+
+End with one sentence:
+"Note: This is an academic research prototype — results are not
+validated for clinical use."
+"""
+
+        models_to_try = [GROQ_PRIMARY_MODEL, GROQ_FALLBACK_MODEL]
+        last_error = None
+        for model_idx, model_name in enumerate(models_to_try):
+            try:
+                return _call_groq_chat_completion(
+                    api_key=api_key,
+                    model_name=model_name,
+                    prompt=prompt,
+                    max_tokens=350,
+                    temperature=0.3,
+                )
+            except Exception as e:
+                last_error = e
+                err_text = str(e).lower()
+                if (
+                    model_idx == 0
+                    and (
+                        "quota" in err_text
+                        or "rate" in err_text
+                        or "429" in err_text
+                        or "too many requests" in err_text
+                        or "decommission" in err_text
+                        or "model_not_found" in err_text
+                        or "not found" in err_text
+                    )
+                ):
+                    continue
+                raise
+
+        if last_error:
+            raise last_error
+        return ""
+
+    except Exception as e:
+        print(f"[LLM summary] API call failed: {e}")
+        return ""
 
 
 # =====================================================================
@@ -1426,9 +1779,9 @@ body.dark-theme [data-testid="stToolbar"],
 body.dark-theme [data-testid="stDecoration"] {
     background: transparent !important;
 }
-body.dark-theme header[data-testid="stHeader"] {
-    background: rgba(11,18,32,0.85) !important;
-    backdrop-filter: blur(8px) !important;
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    backdrop-filter: none !important;
 }
 
 /* ── Markdown code blocks and inline code ── */
@@ -1526,6 +1879,65 @@ def build_icon_fix_js(theme_override: str) -> str:
 """
 
 
+def build_theme_overrides(theme_mode: str, theme_tokens: dict) -> str:
+    """Return small CSS overrides that are injected after the main stylesheet.
+    This ensures critical native widgets (uploader, dataframe, radios) take the
+    correct colors for the currently selected theme even if Streamlit's native
+    theme class is out-of-sync in the page DOM.
+    """
+    light = theme_mode == "Light"
+    if light:
+        fu_bg = "#ffffff"
+        fu_border = "rgba(15,23,42,0.12)"
+        fu_text = "#0f172a"
+        fu_button_bg = "#f1f5f9"
+        df_header_bg = "#f1f5f9"
+        df_bg = "#ffffff"
+        df_text = "#0f172a"
+        radio_bg = "#ffffff"
+        radio_border = "rgba(15,23,42,0.12)"
+        radio_text = "#0f172a"
+    else:
+        fu_bg = "#0f172a"
+        fu_border = "rgba(148,163,184,0.18)"
+        fu_text = "#e2e8f0"
+        fu_button_bg = "#131d33"
+        df_header_bg = "#131d33"
+        df_bg = "#0f172a"
+        df_text = "#e2e8f0"
+        radio_bg = "#0f172a"
+        radio_border = "rgba(148,163,184,0.18)"
+        radio_text = "#e2e8f0"
+
+    css = f"""
+<style>
+/* Per-theme overrides (injected last to win) */
+[data-testid="stFileUploader"] {{
+    background: {fu_bg} !important;
+    border: 1px dashed {fu_border} !important;
+}}
+[data-testid="stFileUploader"] * {{ color: {fu_text} !important; }}
+[data-testid="stFileUploader"] button {{
+    background: {fu_button_bg} !important;
+    border-color: {fu_border} !important;
+    color: {fu_text} !important;
+}}
+[data-testid="stDataFrame"] {{ background: {df_bg} !important; border-color: {fu_border} !important; }}
+[data-testid="stDataFrame"] table {{ color: {df_text} !important; }}
+[data-testid="stDataFrame"] thead tr th {{ background: {df_header_bg} !important; color: {df_text} !important; }}
+[data-testid="stDataFrame"] tbody tr td {{ background: {df_bg} !important; color: {df_text} !important; }}
+[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"] {{
+    background: {radio_bg} !important;
+    border: 1px solid {radio_border} !important;
+    color: {radio_text} !important;
+}}
+[data-testid="stToolbar"], [data-testid="stDecoration"] {{ background: transparent !important; box-shadow: none !important; }}
+header[data-testid="stHeader"] {{ background: transparent !important; box-shadow: none !important; }}
+</style>
+"""
+    return css
+
+
 # =====================================================================
 # Streamlit App Layout
 # =====================================================================
@@ -1554,7 +1966,9 @@ def main():
     theme_tokens = get_theme_tokens("dark" if theme_mode == "Dark" else "light")
 
     # --- Inject CSS + JS ---
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+    # Inject the main stylesheet and then append a small per-theme override block
+    # so native widgets always match the selected theme immediately.
+    st.markdown(CUSTOM_CSS + build_theme_overrides(theme_mode, theme_tokens), unsafe_allow_html=True)
     theme_override = "light" if theme_mode == "Light" else "dark"
     components.html(build_icon_fix_js(theme_override), height=0, width=0)
 
@@ -1738,7 +2152,7 @@ def main():
     # Load shared resources (keyed on selected cancer type)
     try:
         cfg = load_config_json(cancer_type)
-        scaler = load_scaler(cancer_type)
+        load_demo_artifacts(cancer_type)
     except Exception as e:
         st.error(f"Failed to load model artifacts for {cancer_type}: {e}")
         st.stop()
@@ -1821,35 +2235,22 @@ def main():
         else:
             # ------- PREDICTION FLOW -------
             try:
-                # --- Parse & transpose ---
-                raw_df = pd.read_csv(uploaded_file, index_col=0)
+                # --- Parse upload and normalize orientation ---
+                uploaded_file.seek(0)
+                raw_df = pd.read_csv(uploaded_file)
                 st.caption(
-                    f"Raw CSV: {raw_df.shape[0]} features x {raw_df.shape[1]} samples"
+                    f"Raw CSV: {raw_df.shape[0]} rows x {raw_df.shape[1]} columns"
                 )
 
-                data_df = raw_df.T
+                expected_features = cfg["feature_names"]
+                data_df = normalize_uploaded_dataframe(uploaded_file, expected_features)
                 st.caption(
-                    f"After transpose: {data_df.shape[0]} samples x "
+                    f"Normalized input: {data_df.shape[0]} samples x "
                     f"{data_df.shape[1]} features"
                 )
 
-                # --- Feature alignment ---
-                expected_features = cfg["feature_names"]
-                expected_n = len(expected_features)
-                actual_n = data_df.shape[1]
-                if actual_n != expected_n:
-                    st.error(
-                        f"Expected {expected_n:,} features for {cancer_type}, "
-                        f"but got {actual_n:,}. "
-                        f"Please check your input file or switch the cancer type selector. "
-                        f"Required modalities: {', '.join(cfg['modality_order'])}."
-                    )
-                    st.stop()
-
-                X_raw = data_df.values.astype(np.float64)
-
-                # --- Scale ---
-                X_scaled = scaler.transform(X_raw)
+                # --- Inference preprocessing: impute + per-modality scaling ---
+                X_scaled = preprocess_uploaded_csv(data_df, cfg, cancer_type)
 
                 # --- Predict ---
                 section_divider()
@@ -1951,15 +2352,27 @@ def main():
                     unsafe_allow_html=True,
                 )
 
+                top_shap_features = []
+
                 if model_choice == "XGBoost (Baseline)":
                     st.caption(
                         "Computing TreeSHAP waterfall plot for the selected sample..."
                     )
                     with st.spinner("Running TreeSHAP..."):
                         xgb_model = load_xgb_model(cancer_type)
-                        render_shap_waterfall(
+                        xgb_explanation = render_shap_waterfall(
                             xgb_model, X_scaled, cfg, theme_tokens, sample_to_explain
                         )
+                    class_shap = np.asarray(xgb_explanation.values)
+                    top_idx = np.argsort(np.abs(class_shap))[::-1][:8]
+                    top_shap_features = [
+                        {
+                            "feature": cfg["feature_names"][i],
+                            "importance": float(np.abs(class_shap[i])),
+                            "direction": "positive" if class_shap[i] > 0 else "negative",
+                        }
+                        for i in top_idx
+                    ]
                 else:
                     if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
                         st.info(
@@ -1974,6 +2387,23 @@ def main():
                         attr_idx = fusion_attr["sample_ids"].index(selected_sid)
                         top_feats = fusion_attr["top_features_per_sample"][attr_idx][
                             :15
+                        ]
+                        top_shap_features = [
+                            {
+                                "feature": f.get("feature_name", ""),
+                                "importance": float(
+                                    f.get(
+                                        "abs_attribution",
+                                        abs(float(f.get("attribution", 0.0))),
+                                    )
+                                ),
+                                "direction": (
+                                    "positive"
+                                    if float(f.get("attribution", 0.0)) > 0
+                                    else "negative"
+                                ),
+                            }
+                            for f in top_feats[:8]
                         ]
                         top_feats_rev = list(reversed(top_feats))
 
@@ -2038,6 +2468,74 @@ def main():
                             "Run `python scripts/precompute_fusion_attribution.py` "
                             "to enable Integrated Gradients attribution display."
                         )
+
+                # --- LLM Research Summary ---
+                section_divider()
+                st.subheader("🔬 Research Summary")
+                st.caption("Plain-language interpretation of the above results")
+
+                selected_pred_class = int(preds[sample_to_explain])
+                selected_class_name = cfg["class_names"].get(
+                    str(selected_pred_class), f"Class {selected_pred_class}"
+                )
+                selected_probs = probs[sample_to_explain]
+                proba_dict = {
+                    cfg["class_names"].get(str(i), f"Class {i}"): float(selected_probs[i])
+                    for i in range(len(selected_probs))
+                }
+
+                model_type_for_summary = {
+                    "XGBoost (Baseline)": "XGBoost",
+                    "Intermediate Fusion (Deep)": "IntermediateFusion",
+                    "Pathway-Aware Fusion (Deep + Bio Prior)": "PathwayAwareFusion",
+                }.get(model_choice, model_choice)
+
+                top_pathways = []
+                enrichment = load_enrichment_results()
+                cancer_short = cancer_type.replace("GS-", "")
+                enrichment_source = (
+                    "xgb" if model_choice == "XGBoost (Baseline)" else "fusion"
+                )
+                kegg_key = f"kegg_{enrichment_source}_{cancer_short}"
+                if enrichment and kegg_key in enrichment:
+                    enrich_df = enrichment[kegg_key]
+                    if "Term" in enrich_df.columns:
+                        top_pathways = (
+                            enrich_df["Term"].dropna().astype(str).head(5).tolist()
+                        )
+                    elif "pathway" in enrich_df.columns:
+                        top_pathways = (
+                            enrich_df["pathway"].dropna().astype(str).head(5).tolist()
+                        )
+
+                if get_groq_api_key():
+                    with st.spinner("Generating research summary..."):
+                        summary = generate_research_summary(
+                            cancer_type=cancer_type,
+                            predicted_class=selected_class_name,
+                            confidence=float(selected_probs[selected_pred_class]),
+                            all_proba=proba_dict,
+                            top_shap_features=top_shap_features,
+                            top_pathways=top_pathways,
+                            model_type=model_type_for_summary,
+                        )
+
+                    if summary:
+                        st.info(summary)
+                        st.caption(
+                            "⚠️ Summary generated by AI (Llama 3 via Groq). "
+                            "Always verify against primary results above. "
+                            "Not for clinical use."
+                        )
+                    else:
+                        st.warning(
+                            "Summary unavailable - API call failed. See results above."
+                        )
+                else:
+                    st.caption(
+                        "ℹ️ Set the GROQ_API_KEY environment variable or add it to `.env` "
+                        "to enable AI summaries."
+                    )
 
             except Exception as e:
                 st.error(
