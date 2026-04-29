@@ -1,0 +1,13 @@
+sample_id,true_class_idx,true_subtype,xgb_predicted_subtype,xgb_confidence,xgb_correct,has_fusion_attribution,subtype_description
+TCGA.A6.2681.01,0,CMS1 (MSI/Immune),CMS1 (MSI/Immune),0.994,True,True,"Microsatellite-unstable (MSI-H), hypermutated, strong immune infiltration. Best prognosis. Responds to immune checkpoint inhibitors (pembrolizumab)."
+TCGA.A6.5666.01,0,CMS1 (MSI/Immune),CMS1 (MSI/Immune),0.9781,True,True,"Microsatellite-unstable (MSI-H), hypermutated, strong immune infiltration. Best prognosis. Responds to immune checkpoint inhibitors (pembrolizumab)."
+TCGA.A6.5667.01,0,CMS1 (MSI/Immune),CMS1 (MSI/Immune),0.9958,True,True,"Microsatellite-unstable (MSI-H), hypermutated, strong immune infiltration. Best prognosis. Responds to immune checkpoint inhibitors (pembrolizumab)."
+TCGA.AD.6889.01,1,CMS2 (Canonical),CMS2 (Canonical),0.992,True,False,"WNT/MYC activation, chromosomal instability (CIN). Most common CMS subtype. Standard chemotherapy (FOLFOX/FOLFIRI) as primary treatment."
+TCGA.AD.A5EJ.01,1,CMS2 (Canonical),CMS2 (Canonical),0.991,True,False,"WNT/MYC activation, chromosomal instability (CIN). Most common CMS subtype. Standard chemotherapy (FOLFOX/FOLFIRI) as primary treatment."
+TCGA.DM.A0X9.01,2,CMS3 (Metabolic),CMS1 (MSI/Immune),0.8825,False,False,"KRAS mutations, metabolic dysregulation. Intermediate prognosis. Anti-EGFR therapy typically less effective due to KRAS mutations."
+TCGA.DM.A1HA.01,2,CMS3 (Metabolic),CMS1 (MSI/Immune),0.9824,False,False,"KRAS mutations, metabolic dysregulation. Intermediate prognosis. Anti-EGFR therapy typically less effective due to KRAS mutations."
+TCGA.DM.A28C.01,2,CMS3 (Metabolic),CMS3 (Metabolic),0.6997,True,False,"KRAS mutations, metabolic dysregulation. Intermediate prognosis. Anti-EGFR therapy typically less effective due to KRAS mutations."
+TCGA.F4.6806.01,2,CMS3 (Metabolic),CMS1 (MSI/Immune),0.8929,False,False,"KRAS mutations, metabolic dysregulation. Intermediate prognosis. Anti-EGFR therapy typically less effective due to KRAS mutations."
+TCGA.G4.6317.01,0,CMS1 (MSI/Immune),CMS1 (MSI/Immune),0.9971,True,False,"Microsatellite-unstable (MSI-H), hypermutated, strong immune infiltration. Best prognosis. Responds to immune checkpoint inhibitors (pembrolizumab)."
+TCGA.G4.6586.01,1,CMS2 (Canonical),CMS2 (Canonical),0.9695,True,False,"WNT/MYC activation, chromosomal instability (CIN). Most common CMS subtype. Standard chemotherapy (FOLFOX/FOLFIRI) as primary treatment."
+TCGA.G4.6588.01,1,CMS2 (Canonical),CMS2 (Canonical),0.9778,True,False,"WNT/MYC activation, chromosomal instability (CIN). Most common CMS subtype. Standard chemotherapy (FOLFOX/FOLFIRI) as primary treatment."

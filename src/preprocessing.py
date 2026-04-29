@@ -7,6 +7,16 @@ CRITICAL RULES:
   - fit() on TRAIN fold ONLY
   - transform() on both train and val
   - Never fit on combined or future data
+
+KNOWN LIMITATION — ANOVA pre-selection bias:
+  The input CSVs contain only the top-k features selected by ANOVA F-test
+  across ALL samples before CV splitting. This constitutes a minor form of
+  global pre-selection leakage: the feature set itself is informed by labels
+  from the full dataset, so a label-shuffle sanity test will show artificially
+  elevated F1 (≈0.4–0.5 vs. expected ≈0.2 for 5-class random). This is a
+  documented limitation of the MLOmics benchmark dataset format — per-fold
+  feature selection is not feasible in the current pipeline. See
+  docs/preprocessing_verification_report.md for full analysis.
 """
 
 import json

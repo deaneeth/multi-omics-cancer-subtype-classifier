@@ -95,7 +95,7 @@ def load_config(path: str = "config.yaml") -> dict:
 # ---------------------------------------------------------------------------
 # 3. log_experiment — Append results to experiment_log.csv
 # ---------------------------------------------------------------------------
-# Canonical CSV header order — matches CONTEXT.md Section 16
+# Canonical CSV header order
 EXPERIMENT_LOG_COLUMNS = [
     "timestamp",
     "experiment_name",
@@ -186,3 +186,20 @@ def get_device() -> torch.device:
 
     logger.info(f"Compute device selected: {device}")
     return device
+
+
+# ---------------------------------------------------------------------------
+# 5. Shared training helpers
+# ---------------------------------------------------------------------------
+
+def compute_class_weights(y_train: np.ndarray, device: "torch.device") -> "torch.Tensor":
+    """Return inverse-frequency class weights as a float32 tensor on device."""
+    classes, counts = np.unique(y_train, return_counts=True)
+    weights = 1.0 / counts.astype(np.float64)
+    weights = weights / weights.sum() * len(classes)
+    return torch.tensor(weights, dtype=torch.float32, device=device)
+
+
+def dataframes_to_numpy(data_dict: dict) -> dict:
+    """Convert {modality: DataFrame} to {modality: np.ndarray float32}."""
+    return {name: df.values.astype(np.float32) for name, df in data_dict.items()}

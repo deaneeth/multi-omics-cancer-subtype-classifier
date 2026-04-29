@@ -1,8 +1,8 @@
 """
 Prepare Demo Artifacts for Streamlit App
 =========================================
-Exports best-fold models, a plain StandardScaler, config_{cancer}.json,
-and a sample input CSV for the Streamlit demo.
+Exports best-fold models, train-fitted per-modality preprocessing artifacts,
+config_{cancer}.json, and sample input CSVs for the Streamlit demo.
 
 Usage:
     python scripts/prepare_demo_artifacts.py                   # both cancers
@@ -20,11 +20,16 @@ import sys
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.preprocessing import concatenate_modalities, load_cv_folds, prepare_fold_data
+from src.data_loader import MODALITY_KEYS, get_common_samples, load_labels, load_modality
+from src.preprocessing import (
+    PerModalityImputer,
+    PerModalityScaler,
+    concatenate_modalities,
+    load_cv_folds,
+)
 from src.utils import load_config, set_seeds
 
 
@@ -44,6 +49,27 @@ CLASS_NAMES = {
         3: "CMS4 (Mesenchymal)",
     },
 }
+
+
+def _make_columns_unique(columns) -> list:
+    """Rename ALL occurrences of duplicate column names to 'name_0', 'name_1', ...
+
+    Applied to raw modality DataFrames before fitting imputer/scaler so that
+    duplicate NaN-named miRNA features get unique identifiers throughout the
+    entire pipeline (config, sample CSV, and fitted artifact indices all agree).
+    """
+    from collections import Counter
+    counts = Counter(columns)
+    seen: dict = {}
+    result = []
+    for col in columns:
+        if counts[col] > 1:
+            idx = seen.get(col, 0)
+            seen[col] = idx + 1
+            result.append(f"{col}_{idx}")
+        else:
+            result.append(col)
+    return result
 
 
 def find_best_fold(metrics_path: str) -> int:
@@ -134,6 +160,8 @@ def prepare_artifacts_for_cancer(cancer_type: str, config: dict, artifact_dir: s
     xgb_dst = os.path.join(artifact_dir, f"xgb_best_{c}.pkl")
     shutil.copy2(xgb_src, xgb_dst)
     print(f"  {xgb_src} -> {xgb_dst}")
+    if cancer_type == "GS-BRCA":
+        shutil.copy2(xgb_src, os.path.join(artifact_dir, "xgb_best.pkl"))
 
     # --- 3. Copy best Fusion model ---
     print(f"\n=== Copying best Fusion model ({c.upper()}) ===")
@@ -142,38 +170,83 @@ def prepare_artifacts_for_cancer(cancer_type: str, config: dict, artifact_dir: s
     shutil.copy2(fusion_src, fusion_dst)
     print(f"  {fusion_src} -> {fusion_dst}")
 
-    # --- 4. Load fold data and fit plain StandardScaler ---
-    print(f"\n=== Fitting plain StandardScaler on concatenated {c.upper()} training data ===")
+    # --- 4. Load fold raw data and fit train-only preprocessing artifacts ---
+    print(f"\n=== Saving per-modality preprocessing artifacts ({c.upper()}) ===")
     cv_data = load_cv_folds(cancer_type, config, use_toy=False)
     best_fold_info = cv_data["folds"][xgb_best_fold]
+    train_ids = [str(s) for s in best_fold_info["train"]]
+    val_ids = [str(s) for s in best_fold_info["val"]]
 
-    result = prepare_fold_data(cancer_type, best_fold_info, config, use_toy=False)
-    X_train_concat, feature_names = concatenate_modalities(result["X_train"])
-    X_val_concat, _ = concatenate_modalities(result["X_val"])
-
-    concat_scaler = StandardScaler()
-    concat_scaler.fit(X_train_concat)
-    scaler_path = os.path.join(artifact_dir, f"scaler_{c}.pkl")
-    joblib.dump(concat_scaler, scaler_path)
-    print(f"  Scaler fitted on {X_train_concat.shape} training matrix -> {scaler_path}")
-
-    # --- 5. Record modality dims dynamically from the loaded data ---
-    modality_order = ["mrna", "mirna", "methy", "cnv"]
-    modality_dims = {}
+    modality_order = [m for m in MODALITY_KEYS if m in config["modalities"]]
+    raw_modalities = {
+        mod: load_modality(cancer_type, mod, config, use_toy=False)
+        for mod in modality_order
+    }
     for mod in modality_order:
-        if mod in result["X_train"]:
-            modality_dims[mod] = result["X_train"][mod].shape[1]
-    total_feats = sum(modality_dims.values())
+        raw_modalities[mod].columns = raw_modalities[mod].columns.astype(str)
+        raw_modalities[mod].columns = _make_columns_unique(raw_modalities[mod].columns)
+
+    common_samples = set(get_common_samples(cancer_type, config, use_toy=False))
+    train_common = sorted(common_samples.intersection(train_ids))
+    val_common = sorted(common_samples.intersection(val_ids))
+    if not train_common or not val_common:
+        raise ValueError(
+            f"Fold {xgb_best_fold} for {cancer_type} has empty train/val after sample alignment."
+        )
+
+    train_dict = {mod: raw_modalities[mod].loc[train_common].copy() for mod in modality_order}
+    val_dict = {mod: raw_modalities[mod].loc[val_common].copy() for mod in modality_order}
+
+    imputer = PerModalityImputer()
+    imputer.fit(train_dict, modality_order)
+    train_dict = imputer.transform(train_dict, modality_order)
+    val_dict = imputer.transform(val_dict, modality_order)
+    for mod in modality_order:
+        train_dict[mod].columns = train_dict[mod].columns.map(str)
+        val_dict[mod].columns = val_dict[mod].columns.map(str)
+
+    scaler = PerModalityScaler()
+    scaler.fit(train_dict, modality_order)
+    train_dict = scaler.transform(train_dict, modality_order)
+    val_dict = scaler.transform(val_dict, modality_order)
+    for mod in modality_order:
+        train_dict[mod].columns = train_dict[mod].columns.map(str)
+        val_dict[mod].columns = val_dict[mod].columns.map(str)
+
+    _, feature_names = concatenate_modalities(train_dict, modality_order)
+
+    imputer_path = os.path.join(artifact_dir, f"imputer_{c}.pkl")
+    scaler_path = os.path.join(artifact_dir, f"per_modality_scaler_{c}.pkl")
+    joblib.dump(imputer, imputer_path)
+    joblib.dump(scaler, scaler_path)
+    print(f"  Saved train-fitted imputer -> {imputer_path}")
+    print(f"  Saved train-fitted per-modality scaler -> {scaler_path}")
+
+    # Backward-compatible BRCA aliases used by single-cancer demo flows
+    if cancer_type == "GS-BRCA":
+        joblib.dump(imputer, os.path.join(artifact_dir, "imputer.pkl"))
+        joblib.dump(scaler, os.path.join(artifact_dir, "per_modality_scaler.pkl"))
+
+    # --- 5. Record modality dims dynamically from train fold ---
+    modality_dims = {
+        mod: train_dict[mod].shape[1]
+        for mod in modality_order
+        if mod in train_dict
+    }
+    total_feats = len(feature_names)
     print(f"  Modality dims: {modality_dims}")
     print(f"  Total features: {total_feats}")
 
     # --- 6. Save config_{c}.json ---
     print(f"\n=== Saving config_{c}.json ===")
-    y_all = np.concatenate([result["y_train"], result["y_val"]])
+    labels = load_labels(cancer_type, config, use_toy=False)
+    y_all = labels.loc[train_common + val_common].values
     class_labels = sorted(np.unique(y_all).tolist())
     class_names = CLASS_NAMES.get(cancer_type, {i: f"Class {i}" for i in class_labels})
     # JSON keys must be strings
     class_names_str = {str(k): v for k, v in class_names.items()}
+
+    modality_names = list(modality_dims.keys())
 
     demo_config = {
         "cancer_type": cancer_type,
@@ -182,6 +255,8 @@ def prepare_artifacts_for_cancer(cancer_type: str, config: dict, artifact_dir: s
         "class_names": class_names_str,
         "feature_names": feature_names,
         "total_features": len(feature_names),
+        "modality_names": modality_names,
+        "modality_sizes": modality_dims,
         "modality_dims": modality_dims,
         "modality_order": modality_order,
         "xgb_best_fold": xgb_best_fold,
@@ -197,25 +272,24 @@ def prepare_artifacts_for_cancer(cancer_type: str, config: dict, artifact_dir: s
     print(f"  Saved: {config_path}")
     print(f"  {len(feature_names)} features, {len(class_labels)} classes")
 
-    # --- 7. Create sample_input_{c}.csv ---
-    # Format: features as rows, samples as columns (MLOmics native format)
-    print(f"\n=== Creating sample_input_{c}.csv ===")
-    n_samples = min(3, X_val_concat.shape[0])
-    sample_data = X_val_concat[:n_samples]
-    sample_labels = result["y_val"][:n_samples]
+    if cancer_type == "GS-BRCA":
+        with open(os.path.join(artifact_dir, "config.json"), "w") as f:
+            json.dump(demo_config, f, indent=2)
 
-    val_ids = best_fold_info["val"][:n_samples]
-    sample_df = pd.DataFrame(
-        sample_data.T,
-        index=feature_names,
-        columns=val_ids,
-    )
+    # --- 7. Create sample_input_{c}.csv ---
+    # Format: one sample row, columns exactly aligned to config feature_names
+    print(f"\n=== Creating sample_input_{c}.csv ===")
+    X_val_concat, _ = concatenate_modalities(val_dict, modality_order)
+    if X_val_concat.shape[0] == 0:
+        raise ValueError(f"No validation samples available for {cancer_type} fold {xgb_best_fold}")
+
+    sample_df = pd.DataFrame(X_val_concat[:1], columns=feature_names)
     sample_path = os.path.join("app", f"sample_input_{c}.csv")
-    sample_df.to_csv(sample_path)
-    print(f"  Saved {n_samples} samples (features×samples format): {sample_path}")
-    print(f"  True labels: {sample_labels.tolist()}")
-    for i, lbl in enumerate(sample_labels):
-        print(f"    Sample {val_ids[i]}: class {lbl} ({class_names.get(int(lbl), '?')})")
+    sample_df.to_csv(sample_path, index=False)
+    print(f"  Saved sample input (1 x {sample_df.shape[1]:,}): {sample_path}")
+
+    if cancer_type == "GS-BRCA":
+        sample_df.to_csv(os.path.join("app", "sample_input.csv"), index=False)
 
     # --- 8. Copy best PathwayAwareFusion model ---
     print(f"\n=== Copying best PathwayAwareFusion model ({c.upper()}) ===")
