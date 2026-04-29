@@ -43,7 +43,14 @@ from src.evaluation import (
 )
 from src.models import IntermediateFusionModel, MultiOmicsDataset
 from src.preprocessing import load_cv_folds, prepare_fold_data
-from src.utils import get_device, load_config, log_experiment, set_seeds
+from src.utils import (
+    compute_class_weights,
+    dataframes_to_numpy,
+    get_device,
+    load_config,
+    log_experiment,
+    set_seeds,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,19 +62,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def compute_class_weights(y_train: np.ndarray, device: torch.device) -> torch.Tensor:
-    """Compute inverse-frequency class weights for CrossEntropyLoss."""
-    classes, counts = np.unique(y_train, return_counts=True)
-    weights = 1.0 / counts.astype(np.float64)
-    weights = weights / weights.sum() * len(classes)
-    return torch.tensor(weights, dtype=torch.float32, device=device)
-
-
-def dataframes_to_numpy(data_dict: dict) -> dict:
-    """Convert {modality: DataFrame} to {modality: np.ndarray float32}."""
-    return {name: df.values.astype(np.float32) for name, df in data_dict.items()}
-
 
 def plot_training_curves(all_curves: list, cancer_type: str, save_dir: str):
     """Plot train/val loss and val F1 for all folds."""

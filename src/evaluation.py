@@ -138,7 +138,9 @@ def save_metrics(
         cancer_type: Cancer type, e.g. "GS-BRCA".
         filepath: Output CSV path (relative or absolute).
     """
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    dirpath = os.path.dirname(filepath)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
 
     rows = []
     for i, fold_metrics in enumerate(fold_metrics_list):
