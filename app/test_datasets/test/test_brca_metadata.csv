@@ -1,0 +1,21 @@
+sample_id,true_class_idx,true_subtype,xgb_predicted_subtype,xgb_confidence,xgb_correct,has_fusion_attribution,subtype_description
+TCGA.3C.AAAU.01,0,Basal-like,Luminal A,0.7519,False,True,"Triple-negative (ER-/PR-/HER2-) breast cancer. High proliferation, poor prognosis, BRCA1 mutations common. Responds to chemotherapy."
+TCGA.3C.AALI.01,1,HER2-enriched,HER2-enriched,0.9731,True,True,"HER2 gene amplification drives growth. Targeted by trastuzumab (Herceptin). Historically poor prognosis, now improved with HER2 therapy."
+TCGA.A1.A0SB.01,3,Luminal B,Normal-like,0.7095,False,True,ER+ with high Ki-67 or HER2+. More aggressive than Luminal A. May benefit from chemotherapy in addition to hormone therapy.
+TCGA.AC.A2FO.01,0,Basal-like,Basal-like,0.9994,True,False,"Triple-negative (ER-/PR-/HER2-) breast cancer. High proliferation, poor prognosis, BRCA1 mutations common. Responds to chemotherapy."
+TCGA.AO.A129.01,4,Normal-like,Normal-like,0.9984,True,False,Resembles normal breast tissue gene expression. Intermediate prognosis. Distinct from other subtypes; often classified with Luminal A clinically.
+TCGA.AR.A0U4.01,4,Normal-like,Normal-like,0.9986,True,False,Resembles normal breast tissue gene expression. Intermediate prognosis. Distinct from other subtypes; often classified with Luminal A clinically.
+TCGA.AR.A24H.01,2,Luminal A,Luminal A,0.995,True,False,"ER+/PR+, HER2-, low Ki-67. Most common and best-prognosis subtype. Responds well to hormone therapy (tamoxifen/aromatase inhibitors)."
+TCGA.AR.A24O.01,0,Basal-like,Basal-like,0.9995,True,False,"Triple-negative (ER-/PR-/HER2-) breast cancer. High proliferation, poor prognosis, BRCA1 mutations common. Responds to chemotherapy."
+TCGA.AR.A2LK.01,2,Luminal A,Luminal A,0.992,True,False,"ER+/PR+, HER2-, low Ki-67. Most common and best-prognosis subtype. Responds well to hormone therapy (tamoxifen/aromatase inhibitors)."
+TCGA.BH.A0AW.01,1,HER2-enriched,HER2-enriched,0.9942,True,False,"HER2 gene amplification drives growth. Targeted by trastuzumab (Herceptin). Historically poor prognosis, now improved with HER2 therapy."
+TCGA.BH.A0B3.01,4,Normal-like,Normal-like,0.9984,True,False,Resembles normal breast tissue gene expression. Intermediate prognosis. Distinct from other subtypes; often classified with Luminal A clinically.
+TCGA.BH.A0WA.01,4,Normal-like,Normal-like,0.9986,True,False,Resembles normal breast tissue gene expression. Intermediate prognosis. Distinct from other subtypes; often classified with Luminal A clinically.
+TCGA.C8.A1HN.01,2,Luminal A,Luminal A,0.9867,True,False,"ER+/PR+, HER2-, low Ki-67. Most common and best-prognosis subtype. Responds well to hormone therapy (tamoxifen/aromatase inhibitors)."
+TCGA.C8.A8HP.01,1,HER2-enriched,HER2-enriched,0.9966,True,False,"HER2 gene amplification drives growth. Targeted by trastuzumab (Herceptin). Historically poor prognosis, now improved with HER2 therapy."
+TCGA.C8.A8HR.01,3,Luminal B,Basal-like,0.9469,False,False,ER+ with high Ki-67 or HER2+. More aggressive than Luminal A. May benefit from chemotherapy in addition to hormone therapy.
+TCGA.D8.A1JG.01,1,HER2-enriched,HER2-enriched,0.9971,True,False,"HER2 gene amplification drives growth. Targeted by trastuzumab (Herceptin). Historically poor prognosis, now improved with HER2 therapy."
+TCGA.E9.A1RI.01,0,Basal-like,Basal-like,0.9994,True,False,"Triple-negative (ER-/PR-/HER2-) breast cancer. High proliferation, poor prognosis, BRCA1 mutations common. Responds to chemotherapy."
+TCGA.EW.A1OY.01,2,Luminal A,Luminal A,0.9889,True,False,"ER+/PR+, HER2-, low Ki-67. Most common and best-prognosis subtype. Responds well to hormone therapy (tamoxifen/aromatase inhibitors)."
+TCGA.LD.A9QF.01,3,Luminal B,Luminal B,0.6631,True,False,ER+ with high Ki-67 or HER2+. More aggressive than Luminal A. May benefit from chemotherapy in addition to hormone therapy.
+TCGA.LL.A73Z.01,3,Luminal B,Luminal B,0.6649,True,False,ER+ with high Ki-67 or HER2+. More aggressive than Luminal A. May benefit from chemotherapy in addition to hormone therapy.
