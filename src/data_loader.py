@@ -116,7 +116,11 @@ def load_labels(cancer_type: str, config: dict, use_toy: bool = False) -> pd.Ser
 
     labels_df = pd.read_csv(label_path)
 
-    # Attach sample IDs from the first modality
+    # ASSUMPTION: label CSV rows are ordered identically to the columns of the
+    # first-modality CSV (mRNA). The MLOmics dataset guarantees this, but there
+    # is no sample-ID column in the label file to verify row-by-row alignment.
+    # If the source files are ever regenerated independently, this positional
+    # assignment can silently produce wrong class assignments.
     first_mod = MODALITY_KEYS[0]
     ref_df = load_modality(cancer_type, first_mod, config, use_toy=use_toy)
     sample_ids = list(ref_df.index)
@@ -124,7 +128,8 @@ def load_labels(cancer_type: str, config: dict, use_toy: bool = False) -> pd.Ser
     if len(labels_df) != len(sample_ids):
         raise ValueError(
             f"Label count ({len(labels_df)}) does not match "
-            f"sample count from {first_mod} ({len(sample_ids)})"
+            f"sample count from {first_mod} ({len(sample_ids)}). "
+            f"Ensure the label file rows are in the same order as {first_mod} columns."
         )
 
     labels = pd.Series(
@@ -172,7 +177,7 @@ def create_sample_map(config: Optional[dict] = None) -> pd.DataFrame:
     """Build and save the sample map linking patient IDs across modalities.
 
     For each cancer type, records which modalities each sample has.
-    Drops samples with <50% modalities (per CONTEXT.md §4.1 rule 5)
+    Drops samples with <50% modalities (drop_threshold from config.yaml)
     and logs dropped samples to data/dropped_samples.csv.
 
     Args:

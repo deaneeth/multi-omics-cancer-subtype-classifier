@@ -166,10 +166,9 @@ def train_xgboost_cv(
             max_depth=xgb_config["max_depth"],
             learning_rate=xgb_config["learning_rate"],
             random_state=xgb_config["random_state"],
-            objective="multi:softmax",
+            objective="multi:softprob",
             num_class=n_classes,
             eval_metric="mlogloss",
-            use_label_encoder=False,
             verbosity=0,
             n_jobs=-1,
         )

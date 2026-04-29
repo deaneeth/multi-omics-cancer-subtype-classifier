@@ -1,0 +1,412 @@
+{
+  "cancer_type": "GS-COAD",
+  "model_type": "PathwayAwareFusion",
+  "sample_ids": [
+    "TCGA.A6.2681.01",
+    "TCGA.A6.5666.01",
+    "TCGA.A6.5667.01"
+  ],
+  "predictions": [
+    {
+      "sample_id": "TCGA.A6.2681.01",
+      "predicted_class": 0,
+      "confidence": 0.9986332058906555,
+      "probabilities": [
+        0.9986332058906555,
+        0.00032940926030278206,
+        0.0005758688203059137,
+        0.00046154885785654187
+      ]
+    },
+    {
+      "sample_id": "TCGA.A6.5666.01",
+      "predicted_class": 0,
+      "confidence": 0.9952592253684998,
+      "probabilities": [
+        0.9952592253684998,
+        0.001646429649554193,
+        0.0018478728597983718,
+        0.0012464169412851334
+      ]
+    },
+    {
+      "sample_id": "TCGA.A6.5667.01",
+      "predicted_class": 0,
+      "confidence": 0.9997811913490295,
+      "probabilities": [
+        0.9997811913490295,
+        2.7296599000692368e-05,
+        0.00011809523857664317,
+        7.340074080275372e-05
+      ]
+    }
+  ],
+  "top_features_per_sample": [
+    [
+      {
+        "feature_name": "mirna_hsa.mir.659",
+        "modality": "mirna",
+        "attribution": 0.09823530912399292,
+        "abs_attribution": 0.09823530912399292
+      },
+      {
+        "feature_name": "mirna_hsa.mir.3913.1",
+        "modality": "mirna",
+        "attribution": -0.09171593189239502,
+        "abs_attribution": 0.09171593189239502
+      },
+      {
+        "feature_name": "mirna_hsa.mir.296",
+        "modality": "mirna",
+        "attribution": -0.07834457606077194,
+        "abs_attribution": 0.07834457606077194
+      },
+      {
+        "feature_name": "mirna_hsa.mir.218.1",
+        "modality": "mirna",
+        "attribution": 0.07313540577888489,
+        "abs_attribution": 0.07313540577888489
+      },
+      {
+        "feature_name": "mirna_hsa.mir.26a.2",
+        "modality": "mirna",
+        "attribution": -0.06762166321277618,
+        "abs_attribution": 0.06762166321277618
+      },
+      {
+        "feature_name": "mirna_hsa.mir.942",
+        "modality": "mirna",
+        "attribution": 0.06125209480524063,
+        "abs_attribution": 0.06125209480524063
+      },
+      {
+        "feature_name": "mirna_hsa.mir.421",
+        "modality": "mirna",
+        "attribution": -0.06075982749462128,
+        "abs_attribution": 0.06075982749462128
+      },
+      {
+        "feature_name": "mirna_hsa.mir.1306",
+        "modality": "mirna",
+        "attribution": 0.05660407245159149,
+        "abs_attribution": 0.05660407245159149
+      },
+      {
+        "feature_name": "mirna_hsa.mir.4326",
+        "modality": "mirna",
+        "attribution": -0.05533808097243309,
+        "abs_attribution": 0.05533808097243309
+      },
+      {
+        "feature_name": "mirna_hsa.mir.4444.2",
+        "modality": "mirna",
+        "attribution": 0.050745993852615356,
+        "abs_attribution": 0.050745993852615356
+      },
+      {
+        "feature_name": "mirna_hsa.mir.550a.1",
+        "modality": "mirna",
+        "attribution": -0.04750404134392738,
+        "abs_attribution": 0.04750404134392738
+      },
+      {
+        "feature_name": "mirna_hsa.mir.218.2",
+        "modality": "mirna",
+        "attribution": 0.04659382253885269,
+        "abs_attribution": 0.04659382253885269
+      },
+      {
+        "feature_name": "mirna_hsa.mir.6761",
+        "modality": "mirna",
+        "attribution": -0.046294916421175,
+        "abs_attribution": 0.046294916421175
+      },
+      {
+        "feature_name": "mirna_hsa.let.7f.1",
+        "modality": "mirna",
+        "attribution": -0.0460318885743618,
+        "abs_attribution": 0.0460318885743618
+      },
+      {
+        "feature_name": "mirna_hsa.mir.4724",
+        "modality": "mirna",
+        "attribution": 0.045118965208530426,
+        "abs_attribution": 0.045118965208530426
+      },
+      {
+        "feature_name": "mirna_hsa.mir.136",
+        "modality": "mirna",
+        "attribution": 0.04238760843873024,
+        "abs_attribution": 0.04238760843873024
+      },
+      {
+        "feature_name": "mirna_hsa.mir.1.2",
+        "modality": "mirna",
+        "attribution": 0.042378682643175125,
+        "abs_attribution": 0.042378682643175125
+      },
+      {
+        "feature_name": "mirna_hsa.mir.3200",
+        "modality": "mirna",
+        "attribution": -0.04121053218841553,
+        "abs_attribution": 0.04121053218841553
+      },
+      {
+        "feature_name": "mirna_hsa.mir.339",
+        "modality": "mirna",
+        "attribution": -0.039881132543087006,
+        "abs_attribution": 0.039881132543087006
+      },
+      {
+        "feature_name": "mirna_hsa.mir.7.2",
+        "modality": "mirna",
+        "attribution": -0.03840832784771919,
+        "abs_attribution": 0.03840832784771919
+      }
+    ],
+    [
+      {
+        "feature_name": "mirna_hsa.mir.421",
+        "modality": "mirna",
+        "attribution": 0.14690358936786652,
+        "abs_attribution": 0.14690358936786652
+      },
+      {
+        "feature_name": "mirna_hsa.mir.598",
+        "modality": "mirna",
+        "attribution": -0.11462337523698807,
+        "abs_attribution": 0.11462337523698807
+      },
+      {
+        "feature_name": "mirna_hsa.let.7a.3",
+        "modality": "mirna",
+        "attribution": 0.10102853178977966,
+        "abs_attribution": 0.10102853178977966
+      },
+      {
+        "feature_name": "mirna_hsa.mir.335",
+        "modality": "mirna",
+        "attribution": 0.07882868498563766,
+        "abs_attribution": 0.07882868498563766
+      },
+      {
+        "feature_name": "mirna_hsa.mir.196a.2",
+        "modality": "mirna",
+        "attribution": 0.07675787061452866,
+        "abs_attribution": 0.07675787061452866
+      },
+      {
+        "feature_name": "mirna_hsa.mir.9.2",
+        "modality": "mirna",
+        "attribution": -0.07376395165920258,
+        "abs_attribution": 0.07376395165920258
+      },
+      {
+        "feature_name": "mirna_hsa.mir.584",
+        "modality": "mirna",
+        "attribution": -0.064506396651268,
+        "abs_attribution": 0.064506396651268
+      },
+      {
+        "feature_name": "mirna_hsa.mir.203a",
+        "modality": "mirna",
+        "attribution": -0.05044550821185112,
+        "abs_attribution": 0.05044550821185112
+      },
+      {
+        "feature_name": "mirna_hsa.mir.374b",
+        "modality": "mirna",
+        "attribution": 0.04739169776439667,
+        "abs_attribution": 0.04739169776439667
+      },
+      {
+        "feature_name": "mirna_hsa.mir.942",
+        "modality": "mirna",
+        "attribution": -0.04547671228647232,
+        "abs_attribution": 0.04547671228647232
+      },
+      {
+        "feature_name": "mirna_hsa.mir.887",
+        "modality": "mirna",
+        "attribution": 0.043192826211452484,
+        "abs_attribution": 0.043192826211452484
+      },
+      {
+        "feature_name": "mirna_hsa.mir.652",
+        "modality": "mirna",
+        "attribution": 0.04235059395432472,
+        "abs_attribution": 0.04235059395432472
+      },
+      {
+        "feature_name": "mirna_hsa.mir.133a.2",
+        "modality": "mirna",
+        "attribution": -0.041839972138404846,
+        "abs_attribution": 0.041839972138404846
+      },
+      {
+        "feature_name": "mirna_hsa.let.7f.2",
+        "modality": "mirna",
+        "attribution": 0.04176630452275276,
+        "abs_attribution": 0.04176630452275276
+      },
+      {
+        "feature_name": "mirna_hsa.mir.340",
+        "modality": "mirna",
+        "attribution": 0.04174046218395233,
+        "abs_attribution": 0.04174046218395233
+      },
+      {
+        "feature_name": "mirna_hsa.mir.431",
+        "modality": "mirna",
+        "attribution": -0.041232217103242874,
+        "abs_attribution": 0.041232217103242874
+      },
+      {
+        "feature_name": "mirna_hsa.mir.18a",
+        "modality": "mirna",
+        "attribution": 0.04065443575382233,
+        "abs_attribution": 0.04065443575382233
+      },
+      {
+        "feature_name": "mirna_hsa.mir.6761",
+        "modality": "mirna",
+        "attribution": 0.039942942559719086,
+        "abs_attribution": 0.039942942559719086
+      },
+      {
+        "feature_name": "mirna_hsa.mir.224",
+        "modality": "mirna",
+        "attribution": 0.038325559347867966,
+        "abs_attribution": 0.038325559347867966
+      },
+      {
+        "feature_name": "mirna_hsa.mir.125a",
+        "modality": "mirna",
+        "attribution": 0.03615763038396835,
+        "abs_attribution": 0.03615763038396835
+      }
+    ],
+    [
+      {
+        "feature_name": "mirna_hsa.mir.1307",
+        "modality": "mirna",
+        "attribution": 0.07641539722681046,
+        "abs_attribution": 0.07641539722681046
+      },
+      {
+        "feature_name": "mirna_hsa.mir.598",
+        "modality": "mirna",
+        "attribution": -0.06120111793279648,
+        "abs_attribution": 0.06120111793279648
+      },
+      {
+        "feature_name": "mirna_hsa.mir.196a.1",
+        "modality": "mirna",
+        "attribution": 0.060660820454359055,
+        "abs_attribution": 0.060660820454359055
+      },
+      {
+        "feature_name": "mirna_hsa.mir.145",
+        "modality": "mirna",
+        "attribution": 0.05708004906773567,
+        "abs_attribution": 0.05708004906773567
+      },
+      {
+        "feature_name": "mirna_hsa.mir.133b",
+        "modality": "mirna",
+        "attribution": 0.05599872022867203,
+        "abs_attribution": 0.05599872022867203
+      },
+      {
+        "feature_name": "mirna_hsa.mir.129.2",
+        "modality": "mirna",
+        "attribution": 0.05266176536679268,
+        "abs_attribution": 0.05266176536679268
+      },
+      {
+        "feature_name": "mirna_hsa.mir.450b",
+        "modality": "mirna",
+        "attribution": 0.046400539577007294,
+        "abs_attribution": 0.046400539577007294
+      },
+      {
+        "feature_name": "mirna_hsa.mir.133a.2",
+        "modality": "mirna",
+        "attribution": 0.04330293461680412,
+        "abs_attribution": 0.04330293461680412
+      },
+      {
+        "feature_name": "mirna_hsa.mir.219a.1",
+        "modality": "mirna",
+        "attribution": 0.0430028960108757,
+        "abs_attribution": 0.0430028960108757
+      },
+      {
+        "feature_name": "mirna_hsa.mir.28",
+        "modality": "mirna",
+        "attribution": 0.04277076944708824,
+        "abs_attribution": 0.04277076944708824
+      },
+      {
+        "feature_name": "mirna_hsa.mir.149",
+        "modality": "mirna",
+        "attribution": 0.0390099436044693,
+        "abs_attribution": 0.0390099436044693
+      },
+      {
+        "feature_name": "mirna_hsa.mir.224",
+        "modality": "mirna",
+        "attribution": 0.03808906674385071,
+        "abs_attribution": 0.03808906674385071
+      },
+      {
+        "feature_name": "mirna_hsa.mir.218.1",
+        "modality": "mirna",
+        "attribution": 0.03804636001586914,
+        "abs_attribution": 0.03804636001586914
+      },
+      {
+        "feature_name": "mirna_hsa.mir.592",
+        "modality": "mirna",
+        "attribution": 0.03650558739900589,
+        "abs_attribution": 0.03650558739900589
+      },
+      {
+        "feature_name": "mirna_hsa.mir.377",
+        "modality": "mirna",
+        "attribution": 0.03642205148935318,
+        "abs_attribution": 0.03642205148935318
+      },
+      {
+        "feature_name": "mirna_hsa.mir.339",
+        "modality": "mirna",
+        "attribution": -0.034317631274461746,
+        "abs_attribution": 0.034317631274461746
+      },
+      {
+        "feature_name": "mirna_hsa.mir.196a.2",
+        "modality": "mirna",
+        "attribution": -0.03371197730302811,
+        "abs_attribution": 0.03371197730302811
+      },
+      {
+        "feature_name": "mirna_hsa.mir.642a",
+        "modality": "mirna",
+        "attribution": -0.033515289425849915,
+        "abs_attribution": 0.033515289425849915
+      },
+      {
+        "feature_name": "mirna_hsa.mir.3610",
+        "modality": "mirna",
+        "attribution": -0.030745357275009155,
+        "abs_attribution": 0.030745357275009155
+      },
+      {
+        "feature_name": "mirna_hsa.mir.4326",
+        "modality": "mirna",
+        "attribution": -0.029818983748555183,
+        "abs_attribution": 0.029818983748555183
+      }
+    ]
+  ]
+}

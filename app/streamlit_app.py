@@ -1,0 +1,3368 @@
+"""
+MLOmics: Streamlit Demo Application
+====================================
+Cancer subtype prediction from multi-omics CSV upload.
+
+Launch:  streamlit run app/streamlit_app.py
+"""
+
+import json
+import os
+import sys
+
+import joblib
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import shap
+import streamlit as st
+import streamlit.components.v1 as components
+import torch
+
+# ---------------------------------------------------------------------------
+# Resolve project root (one level up from app/)
+# ---------------------------------------------------------------------------
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(APP_DIR)
+sys.path.insert(0, PROJECT_ROOT)
+
+from src.models import IntermediateFusionModel, PathwayAwareFusionModel  # noqa: E402
+
+ARTIFACT_DIR = os.path.join(APP_DIR, "model_artifacts")
+RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
+_STREAMLIT_CONFIG_DIR = os.path.join(PROJECT_ROOT, ".streamlit")
+_STREAMLIT_CONFIG_FILE = os.path.join(_STREAMLIT_CONFIG_DIR, "config.toml")
+
+
+def _is_placeholder_env_value(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    return (
+        not normalized
+        or normalized in {"your_groq_api_key_here", "gsk_your_key_here"}
+        or normalized.startswith("your_")
+    )
+
+
+def _read_env_value_from_file(env_path: str, key_name: str) -> str:
+    if not os.path.exists(env_path):
+        return ""
+
+    try:
+        with open(env_path, encoding="utf-8") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                if key.strip() != key_name:
+                    continue
+                value = value.strip().strip('"').strip("'")
+                return "" if _is_placeholder_env_value(value) else value
+    except OSError as e:
+        print(f"[LLM summary] Could not read {os.path.basename(env_path)}: {e}")
+
+    return ""
+
+
+def get_groq_api_key() -> str:
+    """
+    Return GROQ_API_KEY from the process environment, falling back to local
+    .env files for Streamlit runs launched from an IDE.
+    """
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not _is_placeholder_env_value(api_key):
+        return api_key
+
+    for env_name in [".env", ".env.local"]:
+        api_key = _read_env_value_from_file(
+            os.path.join(PROJECT_ROOT, env_name), "GROQ_API_KEY"
+        )
+        if api_key:
+            os.environ["GROQ_API_KEY"] = api_key
+            return api_key
+
+    os.environ.pop("GROQ_API_KEY", None)
+    return ""
+
+# ── Per-theme Streamlit config.toml content ──────────────────────────────────
+# Colors mirror the CSS design-token variables so native Streamlit widgets
+# (radio buttons, inputs, etc.) render in the same palette as the custom CSS.
+_DARK_CONFIG_TOML = """\
+[theme]
+base = "dark"
+primaryColor = "#3b82f6"
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#0f172a"
+textColor = "#e2e8f0"
+font = "sans serif"
+"""
+
+_LIGHT_CONFIG_TOML = """\
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f6f8fb"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+font = "sans serif"
+"""
+
+
+def _read_config_theme() -> str:
+    """Return 'Dark' or 'Light' based on what config.toml currently declares."""
+    try:
+        if os.path.exists(_STREAMLIT_CONFIG_FILE):
+            with open(_STREAMLIT_CONFIG_FILE) as _f:
+                if 'base = "dark"' in _f.read():
+                    return "Dark"
+    except OSError:
+        pass
+    return "Light"
+
+
+def _write_streamlit_config(theme: str) -> None:
+    """Atomically write .streamlit/config.toml so the next server start uses theme."""
+    os.makedirs(_STREAMLIT_CONFIG_DIR, exist_ok=True)
+    content = _DARK_CONFIG_TOML if theme == "Dark" else _LIGHT_CONFIG_TOML
+    tmp = _STREAMLIT_CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as _f:
+        _f.write(content)
+    os.replace(tmp, _STREAMLIT_CONFIG_FILE)
+
+
+# Force non-interactive matplotlib backend (required for Streamlit)
+matplotlib.use("Agg")
+
+FONT_HEADING = "Space Grotesk"
+FONT_BODY = "Source Sans 3"
+PLOTLY_FONT = f"{FONT_BODY}, sans-serif"
+
+# Consistent chart color palette (no purple for clinical light theme)
+CHART_COLORS = ["#3b82f6", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#14b8a6"]
+GROQ_PRIMARY_MODEL = "llama-3.3-70b-versatile"
+GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"
+GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def get_theme_tokens(theme: str) -> dict:
+    theme = (theme or "light").lower()
+    if theme == "dark":
+        return {
+            "plotly_font": "#cbd5e1",
+            "plotly_grid": "rgba(148,163,184,0.25)",
+            "plotly_axis": "rgba(148,163,184,0.3)",
+            "plotly_muted": "rgba(148,163,184,0.18)",
+            "plotly_highlight": "#60a5fa",
+            "plotly_green": "#34d399",
+            "plotly_red": "#f87171",
+            "mpl_text": "#cbd5e1",
+            "mpl_spine": "#475569",
+            "table_highlight": "rgba(16,185,129,0.18)",
+        }
+    return {
+        "plotly_font": "#334155",
+        "plotly_grid": "rgba(15,23,42,0.12)",
+        "plotly_axis": "rgba(15,23,42,0.18)",
+        "plotly_muted": "rgba(15,23,42,0.12)",
+        "plotly_highlight": "#2563eb",
+        "plotly_green": "#059669",
+        "plotly_red": "#dc2626",
+        "mpl_text": "#334155",
+        "mpl_spine": "#94a3b8",
+        "table_highlight": "rgba(5,150,105,0.16)",
+    }
+# =====================================================================
+# Cached Loading Functions — loaded once, reused across reruns
+# =====================================================================
+
+
+@st.cache_resource
+def load_config_json(cancer_type: str = "GS-BRCA"):
+    """Load demo configuration (feature names, class labels, modality dims)."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(ARTIFACT_DIR, f"config_{suffix}.json")
+    if not os.path.exists(path):
+        path = os.path.join(ARTIFACT_DIR, "config.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def _artifact_suffix(cancer_type: str) -> str:
+    return "brca" if cancer_type == "GS-BRCA" else "coad"
+
+
+def _artifact_with_fallback(cancer_type: str, stem: str, ext: str) -> str:
+    suffix_path = os.path.join(ARTIFACT_DIR, f"{stem}_{_artifact_suffix(cancer_type)}.{ext}")
+    if os.path.exists(suffix_path):
+        return suffix_path
+    return os.path.join(ARTIFACT_DIR, f"{stem}.{ext}")
+
+
+@st.cache_resource
+def load_demo_artifacts(cancer_type: str = "GS-BRCA"):
+    """Load train-fitted preprocessing + XGBoost artifacts for the selected cancer."""
+    imputer = joblib.load(_artifact_with_fallback(cancer_type, "imputer", "pkl"))
+    scaler = joblib.load(_artifact_with_fallback(cancer_type, "per_modality_scaler", "pkl"))
+    model = joblib.load(_artifact_with_fallback(cancer_type, "xgb_best", "pkl"))
+    cfg = load_config_json(cancer_type)
+    return imputer, scaler, model, cfg
+
+
+@st.cache_resource
+def load_xgb_model(cancer_type: str = "GS-BRCA"):
+    """Load the best XGBoost model."""
+    return joblib.load(_artifact_with_fallback(cancer_type, "xgb_best", "pkl"))
+
+
+@st.cache_resource
+def load_fusion_model(cancer_type: str = "GS-BRCA"):
+    """Reconstruct and load the best IntermediateFusion model."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    ckpt = torch.load(
+        os.path.join(ARTIFACT_DIR, f"fusion_best_{suffix}.pt"),
+        map_location="cpu",
+        weights_only=False,
+    )
+    model = IntermediateFusionModel(
+        modality_dims=ckpt["modality_dims"],
+        latent_dim=ckpt["latent_dim"],
+        num_classes=ckpt["num_classes"],
+        encoder_hidden=ckpt["encoder_hidden"],
+        hidden_dim=ckpt["classifier_hidden"],
+        dropout=ckpt["dropout"],
+    )
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.train(mode=False)
+    return model
+
+
+@st.cache_resource
+def load_pathway_fusion_model(cancer_type: str = "GS-BRCA"):
+    """Reconstruct and load the best PathwayAwareFusion model."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    cancer_short = cancer_type.split("-")[1]  # "BRCA" or "COAD"
+
+    ckpt = torch.load(
+        os.path.join(ARTIFACT_DIR, f"pathway_fusion_best_{suffix}.pt"),
+        map_location="cpu",
+        weights_only=False,
+    )
+    mapping_path = os.path.join(ARTIFACT_DIR, "pathway_gene_mapping.json")
+    with open(mapping_path) as _f:
+        full_mapping = json.load(_f)
+    mapping = full_mapping[cancer_short]
+    pathway_indices = mapping["pathways"]
+    unmapped_indices = mapping["unmapped_indices"]
+
+    model = PathwayAwareFusionModel(
+        modality_dims=ckpt["modality_dims"],
+        pathway_indices=pathway_indices,
+        unmapped_indices=unmapped_indices,
+        latent_dim=ckpt["latent_dim"],
+        hidden_dim=ckpt["classifier_hidden"],
+        num_classes=ckpt["num_classes"],
+        dropout=ckpt["dropout"],
+        encoder_hidden=ckpt["encoder_hidden"],
+    )
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.train(mode=False)
+    return model
+
+
+@st.cache_data
+def load_model_comparison():
+    """Load model comparison metrics CSV."""
+    path = os.path.join(RESULTS_DIR, "metrics", "model_comparison.csv")
+    if os.path.exists(path):
+        return pd.read_csv(path)
+    return None
+
+
+@st.cache_data
+def load_sample_csv_bytes(cancer_type: str = "GS-BRCA"):
+    """Load sample CSV for download button."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(APP_DIR, f"sample_input_{suffix}.csv")
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return f.read()
+    return None
+
+
+@st.cache_data
+def load_latent_space_data(cancer_type: str = "GS-BRCA"):
+    """Load precomputed latent space t-SNE embeddings for the given cancer type."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(ARTIFACT_DIR, f"latent_space_data_{suffix}.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+@st.cache_data
+def load_fusion_attributions(cancer_type: str = "GS-BRCA"):
+    """Load precomputed Integrated Gradients attribution for fusion model."""
+    suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+    path = os.path.join(ARTIFACT_DIR, f"fusion_attribution_results_{suffix}.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+@st.cache_data
+def load_enrichment_results():
+    """Load precomputed pathway enrichment results."""
+    data = {}
+    for cancer in ["BRCA", "COAD"]:
+        for source in ["fusion", "xgb"]:
+            for db in ["kegg", "go"]:
+                path = os.path.join(
+                    RESULTS_DIR, "enrichment", f"{db}_{source}_{cancer}.csv"
+                )
+                if os.path.exists(path):
+                    df = pd.read_csv(path)
+                    if not df.empty:
+                        data[f"{db}_{source}_{cancer}"] = df
+        val_path = os.path.join(
+            RESULTS_DIR, "enrichment", f"pathway_validation_{cancer}.json"
+        )
+        if os.path.exists(val_path):
+            with open(val_path) as f:
+                data[f"validation_{cancer}"] = json.load(f)
+    attn_path = os.path.join(RESULTS_DIR, "enrichment", "pathway_attention_scores.csv")
+    if os.path.exists(attn_path):
+        data["attention_scores"] = pd.read_csv(attn_path)
+    return data if data else None
+
+
+# =====================================================================
+# Helper Functions — Model logic (UNCHANGED)
+# =====================================================================
+
+
+def normalize_uploaded_dataframe(uploaded_file, expected_features: list[str]) -> pd.DataFrame:
+    """Read CSV upload and coerce it to samples x prefixed-feature columns.
+
+    Handles three formats:
+    1. Standard: columns are already feature names (index becomes 0, 1, …)
+    2. Sample-ID leading column: first column is a sample ID (TCGA.XX…), rest
+       are feature columns — first column becomes the DataFrame index so TCGA
+       IDs are preserved for attribution lookup.
+    3. Legacy transposed: first column contains feature names, rows are samples.
+    """
+    uploaded_file.seek(0)
+    df = pd.read_csv(uploaded_file)
+    if df.empty:
+        raise ValueError("Uploaded CSV is empty.")
+
+    df.columns = df.columns.astype(str)
+    expected_set = set(expected_features)
+
+    # If the first column is NOT a feature name, it may be sample IDs or the
+    # legacy transposed feature-name column.
+    if df.columns[0] not in expected_set and len(df.columns) > 1:
+        first_col = str(df.columns[0])
+        first_col_values = set(df[first_col].astype(str).tolist())
+
+        if expected_set.issubset(first_col_values):
+            # Legacy transposed format: first column holds feature names
+            df_t = df.set_index(first_col).T
+            df_t.columns = df_t.columns.astype(str)
+            return df_t
+
+        # Sample-ID column: promote to index so TCGA IDs survive into sample_ids
+        df = df.set_index(first_col)
+        df.index.name = "sample_id"
+        df.columns = df.columns.astype(str)
+
+    # Standard format: expected feature columns are present
+    if expected_set.issubset(set(df.columns)):
+        return df
+
+    return df
+
+
+def preprocess_uploaded_csv(df_raw: pd.DataFrame, cfg: dict, cancer_type: str) -> np.ndarray:
+    """
+    Preprocess uploaded samples with the exact train-fitted imputer/scaler pipeline.
+    """
+    imputer, scaler, _, _ = load_demo_artifacts(cancer_type)
+
+    modality_names = cfg.get("modality_names", cfg.get("modality_order", []))
+    modality_sizes = cfg.get("modality_sizes", cfg.get("modality_dims", {}))
+    feature_names = cfg["feature_names"]
+
+    uploaded_cols = set(df_raw.columns.astype(str).tolist())
+    expected_cols = set(feature_names)
+
+    missing = sorted(expected_cols - uploaded_cols)
+    extra = sorted(uploaded_cols - expected_cols)
+
+    if missing:
+        raise ValueError(
+            f"Uploaded file is missing {len(missing)} expected features. "
+            f"First 5 missing: {missing[:5]}. "
+            "Use the provided sample CSV as a template."
+        )
+    if extra:
+        st.warning(
+            f"Uploaded file has {len(extra)} unexpected columns. They will be ignored."
+        )
+
+    df_aligned = (
+        df_raw.reindex(columns=feature_names)
+        .apply(pd.to_numeric, errors="coerce")
+    )
+
+    data_dict = {}
+    start = 0
+    for mod in modality_names:
+        if mod not in modality_sizes:
+            raise ValueError(f"Config missing modality size for '{mod}'.")
+        size = int(modality_sizes[mod])
+        cols = feature_names[start : start + size]
+        if len(cols) != size:
+            raise ValueError(
+                f"Feature boundary mismatch for modality '{mod}'. "
+                f"Expected {size} columns, found {len(cols)}."
+            )
+        raw_cols = [c.split("_", 1)[1] if "_" in c else c for c in cols]
+        data_dict[mod] = pd.DataFrame(
+            df_aligned.iloc[:, start : start + size].values,
+            index=df_aligned.index,
+            columns=raw_cols,
+        )
+        start += size
+
+    if start != len(feature_names):
+        raise ValueError(
+            f"Config modality sizes sum to {start}, expected {len(feature_names)}."
+        )
+
+    imputed = imputer.transform(data_dict, modality_names)
+    scaled = scaler.transform(imputed, modality_names)
+    return np.concatenate([scaled[m].values for m in modality_names], axis=1)
+
+
+def split_by_modality(X_concat: np.ndarray, cfg: dict) -> dict:
+    """Split concatenated feature array into per-modality dict using config."""
+    modality_order = cfg["modality_order"]
+    modality_dims = cfg["modality_dims"]
+
+    x_dict = {}
+    start = 0
+    for mod in modality_order:
+        if mod not in modality_dims:
+            continue
+        dim = modality_dims[mod]
+        x_dict[mod] = X_concat[:, start : start + dim]
+        start += dim
+
+    return x_dict
+
+
+def predict_xgboost(model, X_scaled: np.ndarray):
+    """Run XGBoost prediction. Returns (predicted_class, probabilities)."""
+    probs = model.predict_proba(X_scaled)
+    pred = np.argmax(probs, axis=1)
+    return pred, probs
+
+
+def predict_fusion(model, X_scaled: np.ndarray, cfg: dict):
+    """Run IntermediateFusion prediction. Returns (predicted_class, probabilities)."""
+    x_dict = split_by_modality(X_scaled, cfg)
+    x_dict_tensor = {k: torch.tensor(v, dtype=torch.float32) for k, v in x_dict.items()}
+
+    with torch.no_grad():
+        logits = model(x_dict_tensor)
+        probs = torch.softmax(logits, dim=1).numpy()
+    pred = np.argmax(probs, axis=1)
+    return pred, probs
+
+
+def compute_shap_explanation(model, X_scaled: np.ndarray, sample_idx: int = 0):
+    """Compute TreeSHAP for XGBoost. Returns shap.Explanation for the predicted class."""
+    explainer = shap.TreeExplainer(model)
+    # Compute SHAP only for the requested sample to avoid O(n_samples) cost on
+    # multi-row uploads.
+    sample_row = X_scaled[sample_idx : sample_idx + 1]
+    shap_values = explainer.shap_values(sample_row)
+
+    pred_class = np.argmax(
+        model.predict_proba(sample_row), axis=1
+    )[0]
+
+    if isinstance(shap_values, list):
+        sv = shap_values[pred_class][0]
+    else:
+        sv = shap_values[0, :, pred_class]
+
+    base_val = explainer.expected_value
+    if isinstance(base_val, (np.ndarray, list)):
+        base_val = base_val[pred_class]
+
+    return shap.Explanation(
+        values=sv,
+        base_values=float(base_val),
+        data=X_scaled[sample_idx],
+    )
+
+
+def _call_groq_chat_completion(
+    api_key: str,
+    model_name: str,
+    prompt: str,
+    max_tokens: int = 350,
+    temperature: float = 0.3,
+) -> str:
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    try:
+        from groq import Groq
+
+        client = Groq(api_key=api_key)
+        response = client.chat.completions.create(**payload)
+        return response.choices[0].message.content.strip()
+    except ModuleNotFoundError:
+        import requests
+
+        response = requests.post(
+            GROQ_CHAT_COMPLETIONS_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+
+def generate_research_summary(
+    cancer_type: str,
+    predicted_class: str,
+    confidence: float,
+    all_proba: dict,
+    top_shap_features: list,
+    top_pathways: list,
+    model_type: str,
+) -> str:
+    """
+    Call Groq API to generate a plain-English research summary.
+    Returns summary string, or empty string if API unavailable.
+    """
+    get_groq_api_key()
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return ""
+
+    def format_feature(feat_name: str) -> str:
+        modality_labels = {
+            "mrna": "mRNA",
+            "mirna": "miRNA",
+            "methy": "DNA methylation",
+            "cnv": "CNV",
+        }
+        parts = feat_name.split("_", 1)
+        if len(parts) == 2:
+            modality, gene = parts
+            return f"{gene} ({modality_labels.get(modality.lower(), modality.upper())})"
+        return feat_name
+
+    try:
+        top_features_text = "\n".join(
+            [
+                f"  - {format_feature(f['feature'])}: "
+                f"{'increased' if f['direction'] == 'positive' else 'decreased'} "
+                f"prediction (importance score: {f['importance']:.3f})"
+                for f in top_shap_features[:8]
+            ]
+        )
+        if not top_features_text:
+            top_features_text = "  - No sample-level feature attribution was available."
+
+        all_proba_text = "\n".join(
+            [
+                f"  - {cls}: {prob:.1%}"
+                for cls, prob in sorted(
+                    all_proba.items(), key=lambda x: x[1], reverse=True
+                )
+            ]
+        )
+
+        pathway_text = (
+            "Enriched pathways: " + ", ".join(top_pathways[:5])
+            if top_pathways
+            else "No statistically significant pathway enrichment detected."
+        )
+
+        prompt = f"""You are a bioinformatics research assistant helping
+explain machine learning results to a non-expert academic audience.
+Write a clear, factual, 3-paragraph research summary of these results.
+
+STRICT RULES:
+- Use research/academic language only
+- NEVER make clinical recommendations
+- NEVER say "this patient has cancer" or suggest treatment
+- NEVER claim these results are diagnostically valid
+- Always frame findings as "the model predicted" not "the patient has"
+- Keep each paragraph to 2-3 sentences maximum
+- If a gene/pathway is biologically relevant, briefly explain why
+
+RESULTS TO SUMMARISE:
+Cancer type studied: {cancer_type}
+Model used: {model_type}
+Predicted subtype: {predicted_class} (confidence: {confidence:.1%})
+
+All subtype probabilities:
+{all_proba_text}
+
+Top features driving this prediction (SHAP or attribution analysis):
+{top_features_text}
+
+Biological pathway analysis:
+{pathway_text}
+
+WRITE THREE SHORT PARAGRAPHS:
+Paragraph 1: What the model predicted and how confident it was.
+Paragraph 2: Which molecular features drove the prediction and
+             what they suggest biologically (briefly).
+Paragraph 3: What the pathway findings indicate, or if no pathways
+             were enriched, what that means for this sample.
+
+End with one sentence:
+"Note: This is an academic research prototype — results are not
+validated for clinical use."
+"""
+
+        models_to_try = [GROQ_PRIMARY_MODEL, GROQ_FALLBACK_MODEL]
+        last_error = None
+        for model_idx, model_name in enumerate(models_to_try):
+            try:
+                return _call_groq_chat_completion(
+                    api_key=api_key,
+                    model_name=model_name,
+                    prompt=prompt,
+                    max_tokens=350,
+                    temperature=0.3,
+                )
+            except Exception as e:
+                last_error = e
+                err_text = str(e).lower()
+                if (
+                    model_idx == 0
+                    and (
+                        "quota" in err_text
+                        or "rate" in err_text
+                        or "429" in err_text
+                        or "too many requests" in err_text
+                        or "decommission" in err_text
+                        or "model_not_found" in err_text
+                        or "not found" in err_text
+                    )
+                ):
+                    continue
+                raise
+
+        if last_error:
+            raise last_error
+        return ""
+
+    except Exception as e:
+        print(f"[LLM summary] API call failed: {e}")
+        return ""
+
+
+# =====================================================================
+# Plotly Theme Helper
+# =====================================================================
+
+
+def apply_plotly_theme(fig, theme_tokens: dict):
+    """Apply consistent theme to any Plotly figure (light/dark aware)."""
+    fig.update_layout(
+        colorway=CHART_COLORS,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family=PLOTLY_FONT, color=theme_tokens["plotly_font"], size=12),
+        xaxis=dict(
+            gridcolor=theme_tokens["plotly_grid"],
+            linecolor=theme_tokens["plotly_axis"],
+            zerolinecolor=theme_tokens["plotly_axis"],
+        ),
+        yaxis=dict(
+            gridcolor=theme_tokens["plotly_grid"],
+            linecolor=theme_tokens["plotly_axis"],
+            zerolinecolor=theme_tokens["plotly_axis"],
+        ),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor="rgba(0,0,0,0)",
+            font=dict(color=theme_tokens["plotly_font"], size=11),
+        ),
+        margin=dict(l=50, r=20, t=50, b=50),
+    )
+    return fig
+
+
+# =====================================================================
+# UI Component Helpers
+# =====================================================================
+
+
+def render_prediction_card(sample_id: str, class_name: str, confidence: float):
+    """Render a premium prediction card with gradient top border."""
+    tier = "high" if confidence >= 0.8 else "moderate" if confidence >= 0.5 else "low"
+    tier_label = {"high": "HIGH CONFIDENCE", "moderate": "MODERATE", "low": "LOW"}[tier]
+
+    st.markdown(
+        '<div class="pred-card {tier}">'
+        '<div class="sample-id">{sid}</div>'
+        '<div class="class-name">{cn}</div>'
+        '<div class="confidence-bar-track">'
+        '<div class="confidence-bar-fill" style="width:{pct}%;"></div>'
+        "</div>"
+        '<div class="confidence-text">'
+        "<span>{conf}</span>"
+        '<span style="font-size:0.72rem;font-weight:500;">{tl}</span>'
+        "</div></div>".format(
+            tier=tier,
+            sid=sample_id,
+            cn=class_name,
+            pct=int(confidence * 100),
+            conf=f"{confidence:.1%}",
+            tl=tier_label,
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_confidence_chart(
+    probs: np.ndarray, cfg: dict, theme_tokens: dict, sample_idx: int = 0
+):
+    """Render a Plotly bar chart showing per-class confidence."""
+    class_names = cfg["class_names"]
+    p = probs[sample_idx]
+    pred_class = np.argmax(p)
+
+    labels = [class_names.get(str(i), f"Class {i}") for i in range(len(p))]
+    colors = [
+        theme_tokens["plotly_highlight"]
+        if i == pred_class
+        else theme_tokens["plotly_muted"]
+        for i in range(len(p))
+    ]
+
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=labels,
+                y=p,
+                marker_color=colors,
+                text=[f"{v:.1%}" for v in p],
+                textposition="auto",
+                textfont=dict(size=13, family=PLOTLY_FONT),
+            )
+        ]
+    )
+    fig.update_layout(
+        title=dict(
+            text="Prediction Confidence by Subtype",
+            font=dict(size=15),
+        ),
+        yaxis_title="Probability",
+        height=380,
+    )
+    apply_plotly_theme(fig, theme_tokens)
+    fig.update_yaxes(range=[0, 1])
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_shap_waterfall(
+    model,
+    X_scaled: np.ndarray,
+    cfg: dict,
+    theme_tokens: dict,
+    sample_idx: int = 0,
+):
+    """Compute TreeSHAP and render waterfall plot for one sample."""
+    explanation = compute_shap_explanation(model, X_scaled, sample_idx)
+    explanation.feature_names = cfg["feature_names"]
+
+    shap.plots.waterfall(explanation, max_display=15, show=False)
+    fig = plt.gcf()
+    fig.patch.set_facecolor("none")
+    for a in fig.get_axes():
+        a.set_facecolor("none")
+        a.tick_params(colors=theme_tokens["mpl_text"])
+        a.xaxis.label.set_color(theme_tokens["mpl_text"])
+        a.yaxis.label.set_color(theme_tokens["mpl_text"])
+        if a.get_title():
+            a.title.set_color(theme_tokens["mpl_text"])
+        for spine in a.spines.values():
+            spine.set_edgecolor(theme_tokens["mpl_spine"])
+    st.pyplot(fig, clear_figure=True)
+    plt.close(fig)
+
+    return explanation
+
+
+def render_pipeline_diagram():
+    """Render pipeline diagram with premium step cards."""
+    steps = [
+        (
+            "📁",
+            "CSV Upload",
+            "Multi-omics data (features x samples)",
+            "var(--accent-blue-soft)",
+            "var(--accent-blue-border)",
+        ),
+        (
+            "⚙️",
+            "Preprocessing",
+            "Transpose + StandardScaler normalization",
+            "var(--accent-amber-soft)",
+            "var(--accent-amber-border)",
+        ),
+        (
+            "🧠",
+            "Model Inference",
+            "XGBoost, Intermediate Fusion, or Pathway-Aware Fusion",
+            "var(--accent-cyan-soft)",
+            "var(--accent-cyan-border)",
+        ),
+        (
+            "🎯",
+            "Prediction",
+            "Subtype classification + confidence",
+            "var(--accent-green-soft)",
+            "var(--accent-green-border)",
+        ),
+        (
+            "🔍",
+            "Explanation",
+            "SHAP waterfall feature importance",
+            "var(--accent-blue-soft)",
+            "var(--accent-blue-border)",
+        ),
+    ]
+
+    parts = []
+    for i, (icon, title, desc, bg_color, border_color) in enumerate(steps):
+        parts.append(
+            '<div class="pipeline-step">'
+            '<div class="step-icon" style="background:{bg};border:1px solid {bc};">'
+            "{icon}</div>"
+            '<div class="step-text">'
+            '<div class="step-title">{title}</div>'
+            '<div class="step-desc">{desc}</div>'
+            "</div></div>".format(
+                icon=icon, title=title, desc=desc, bg=bg_color, bc=border_color
+            )
+        )
+        if i < len(steps) - 1:
+            parts.append('<div class="pipeline-arrow">↓</div>')
+
+    html = (
+        '<div style="display:flex;flex-direction:column;gap:0;">'
+        + "".join(parts)
+        + "</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def section_divider():
+    st.markdown(
+        '<div style="height:1px;background:linear-gradient(90deg,transparent,var(--divider-color),transparent);margin:28px 0;"></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# SVG chevron for custom <details> elements
+_CHEVRON_SVG = (
+    '<svg class="chevron-svg" width="14" height="14" viewBox="0 0 16 16" '
+    'fill="currentColor"><path d="M6 2l6 6-6 6V2z"/></svg>'
+)
+
+
+# =====================================================================
+# CSS Design System — Clinical Light + Deep Dark Theme
+# =====================================================================
+
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
+
+/* ── ROOT VARIABLES (Light default) ── */
+:root {
+    --bg-deepest: #f6f8fb;
+    --bg-card: #ffffff;
+    --bg-elevated: #f1f5f9;
+    --bg-hover: #e2e8f0;
+    --bg-sidebar: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    --border-subtle: rgba(15,23,42,0.12);
+    --border-hover: rgba(15,23,42,0.2);
+    --text-primary: #0f172a;
+    --text-secondary: #334155;
+    --text-muted: #64748b;
+    --accent-blue: #2563eb;
+    --accent-cyan: #0891b2;
+    --accent-green: #059669;
+    --accent-amber: #d97706;
+    --accent-red: #dc2626;
+    --gradient-blue: linear-gradient(135deg, #2563eb, #0891b2);
+    --gradient-green: linear-gradient(135deg, #059669, #0ea5a5);
+    --gradient-amber: linear-gradient(135deg, #d97706, #dc2626);
+    --radius: 12px;
+    --shadow-card: 0 8px 24px rgba(15,23,42,0.08), 0 2px 6px rgba(15,23,42,0.06);
+    --shadow-glow-blue: 0 0 18px rgba(37,99,235,0.18);
+    --divider-color: rgba(15,23,42,0.12);
+    --chip-blue-bg: rgba(37,99,235,0.12);
+    --chip-blue-text: #1d4ed8;
+    --chip-cyan-bg: rgba(8,145,178,0.12);
+    --chip-cyan-text: #0e7490;
+    --chip-green-bg: rgba(5,150,105,0.12);
+    --chip-green-text: #047857;
+    --chip-amber-bg: rgba(217,119,6,0.12);
+    --chip-amber-text: #b45309;
+    --tone-success-bg: rgba(5,150,105,0.12);
+    --tone-success-border: rgba(5,150,105,0.3);
+    --tone-success-text: #047857;
+    --tone-warning-bg: #fffbeb;
+    --tone-warning-border: #f59e0b;
+    --tone-warning-text: #92400e;
+    --accent-blue-soft: rgba(37,99,235,0.12);
+    --accent-blue-border: rgba(37,99,235,0.3);
+    --accent-cyan-soft: rgba(8,145,178,0.12);
+    --accent-cyan-border: rgba(8,145,178,0.3);
+    --accent-green-soft: rgba(5,150,105,0.12);
+    --accent-green-border: rgba(5,150,105,0.3);
+    --accent-amber-soft: rgba(217,119,6,0.12);
+    --accent-amber-border: rgba(217,119,6,0.3);
+    --font-heading: 'Space Grotesk', sans-serif;
+    --font-body: 'Source Sans 3', sans-serif;
+}
+
+/* ── DARK THEME OVERRIDES ── */
+body.dark-theme {
+    --bg-deepest: #0b1220;
+    --bg-card: #0f172a;
+    --bg-elevated: #131d33;
+    --bg-hover: #1e293b;
+    --bg-sidebar: linear-gradient(180deg, #0f172a 0%, #0a0f1d 100%);
+    --border-subtle: rgba(148,163,184,0.18);
+    --border-hover: rgba(148,163,184,0.32);
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent-blue: #60a5fa;
+    --accent-cyan: #22d3ee;
+    --accent-green: #34d399;
+    --accent-amber: #fbbf24;
+    --accent-red: #f87171;
+    --gradient-blue: linear-gradient(135deg, #60a5fa, #22d3ee);
+    --gradient-green: linear-gradient(135deg, #34d399, #22d3ee);
+    --gradient-amber: linear-gradient(135deg, #fbbf24, #f87171);
+    --shadow-card: 0 6px 24px rgba(0,0,0,0.35), 0 2px 10px rgba(0,0,0,0.2);
+    --shadow-glow-blue: 0 0 24px rgba(96,165,250,0.25);
+    --divider-color: rgba(148,163,184,0.18);
+    --chip-blue-bg: rgba(96,165,250,0.12);
+    --chip-blue-text: #93c5fd;
+    --chip-cyan-bg: rgba(34,211,238,0.12);
+    --chip-cyan-text: #67e8f9;
+    --chip-green-bg: rgba(52,211,153,0.12);
+    --chip-green-text: #6ee7b7;
+    --chip-amber-bg: rgba(251,191,36,0.12);
+    --chip-amber-text: #fde68a;
+    --tone-success-bg: rgba(16,185,129,0.12);
+    --tone-success-border: rgba(16,185,129,0.28);
+    --tone-success-text: #34d399;
+    --tone-warning-bg: rgba(245,158,11,0.12);
+    --tone-warning-border: rgba(245,158,11,0.35);
+    --tone-warning-text: #fbbf24;
+    --accent-blue-soft: rgba(96,165,250,0.12);
+    --accent-blue-border: rgba(96,165,250,0.3);
+    --accent-cyan-soft: rgba(34,211,238,0.12);
+    --accent-cyan-border: rgba(34,211,238,0.3);
+    --accent-green-soft: rgba(52,211,153,0.12);
+    --accent-green-border: rgba(52,211,153,0.3);
+    --accent-amber-soft: rgba(251,191,36,0.12);
+    --accent-amber-border: rgba(251,191,36,0.3);
+    color-scheme: dark;
+}
+
+body.light-theme { color-scheme: light; }
+
+/* ── GLOBAL TYPOGRAPHY ── */
+html, body, [class*="st-"], .stMarkdown, .stText, p, span, label, div {
+    font-family: var(--font-body) !important;
+    -webkit-font-smoothing: antialiased;
+}
+body {
+    color: var(--text-secondary);
+}
+h1, h2, h3, h4, h5, h6,
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
+.stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+    font-family: var(--font-heading);
+    color: var(--text-primary);
+}
+a { color: var(--accent-blue); }
+.stCaption { color: var(--text-muted) !important; }
+
+/* ── PAGE BACKGROUND ── */
+.stApp {
+    background:
+        radial-gradient(1200px circle at 12% -10%, rgba(37,99,235,0.12) 0%, transparent 55%),
+        radial-gradient(1000px circle at 88% 10%, rgba(8,145,178,0.10) 0%, transparent 50%),
+        linear-gradient(180deg, rgba(15,23,42,0.04), rgba(15,23,42,0.02)),
+        var(--bg-deepest) !important;
+}
+body.dark-theme .stApp {
+    background:
+        radial-gradient(900px circle at 12% -10%, rgba(96,165,250,0.16) 0%, transparent 55%),
+        radial-gradient(900px circle at 88% 10%, rgba(34,211,238,0.12) 0%, transparent 50%),
+        var(--bg-deepest) !important;
+}
+.stApp > header {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+}
+[data-testid="stHeader"] {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+}
+
+/* ── MAIN CONTENT AREA ── */
+.block-container {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1200px !important;
+}
+
+/* ── SIDEBAR ── */
+[data-testid="stSidebar"] {
+    background: var(--bg-sidebar) !important;
+    border-right: 1px solid var(--border-subtle) !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stRadio label span {
+    color: var(--text-secondary) !important;
+}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+    color: var(--text-primary) !important;
+}
+[data-testid="stSidebar"] hr {
+    border-color: var(--border-subtle) !important;
+}
+[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+    padding: 8px 12px !important;
+    margin-bottom: 4px !important;
+    transition: all 0.2s ease !important;
+}
+[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"]:hover {
+    border-color: var(--accent-blue) !important;
+    background: var(--bg-elevated) !important;
+}
+[data-testid="stSidebar"] .stCaption, [data-testid="stSidebar"] small {
+    color: var(--text-muted) !important;
+}
+
+/* Material Icons ligature text is replaced with SVGs via JS below.
+   No CSS blanket-hide here — it would override the JS replacements. */
+
+/* ── Custom <details> expanders with SVG chevrons ── */
+.custom-details {
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+.custom-details summary {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    list-style: none;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+.custom-details summary:hover {
+    border-color: var(--accent-blue);
+    background: var(--bg-elevated);
+}
+.custom-details summary::-webkit-details-marker { display: none; }
+.custom-details summary::marker { display: none; content: ""; }
+.custom-details .chevron-svg {
+    flex-shrink: 0;
+    transition: transform 0.2s;
+}
+.custom-details[open] .chevron-svg {
+    transform: rotate(90deg);
+}
+.custom-details .details-body {
+    padding: 12px 14px;
+    font-size: 0.84rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+.custom-details .details-body a {
+    color: var(--accent-cyan);
+}
+/* Main-area variant */
+.custom-details-main summary {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+.custom-details-main summary:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-hover);
+}
+.custom-details-main .details-body {
+    color: var(--text-muted);
+}
+
+/* ── TABS — Pill style ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0px;
+    background: var(--bg-card);
+    border-radius: 10px;
+    padding: 4px;
+    border: 1px solid var(--border-subtle);
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px;
+    padding: 8px 20px;
+    color: var(--text-muted) !important;
+    font-weight: 500;
+    font-size: 0.9rem;
+    background: transparent;
+    border: none !important;
+    transition: all 0.2s ease;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--text-primary) !important;
+    background: var(--bg-elevated);
+}
+.stTabs [aria-selected="true"] {
+    background: var(--accent-blue) !important;
+    color: white !important;
+    font-weight: 600;
+}
+.stTabs [data-baseweb="tab-highlight"],
+.stTabs [data-baseweb="tab-border"] {
+    display: none;
+}
+
+/* ── SIDEBAR BRAND ── */
+.sidebar-brand {
+    padding: 8px 0 20px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 20px;
+}
+.sidebar-logo {
+    font-size: 2rem;
+    font-weight: 800;
+    font-family: var(--font-heading);
+    background: var(--gradient-blue);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+.sidebar-tagline {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+    line-height: 1.4;
+}
+
+/* ── HERO / WELCOME ── */
+.hero-block { margin-bottom: 24px; }
+.hero-title {
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.15;
+    margin-bottom: 12px;
+    font-family: var(--font-heading);
+}
+.brand-gradient {
+    background: var(--gradient-blue);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.hero-subtitle {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 520px;
+}
+
+/* ── CHIP PILLS ── */
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.chip {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+.chip-blue { background: var(--chip-blue-bg); color: var(--chip-blue-text); }
+.chip-cyan { background: var(--chip-cyan-bg); color: var(--chip-cyan-text); }
+.chip-green { background: var(--chip-green-bg); color: var(--chip-green-text); }
+.chip-amber { background: var(--chip-amber-bg); color: var(--chip-amber-text); }
+.chip-meta {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+.chip-meta strong { color: var(--text-secondary); }
+
+/* ── MAIN HEADER ── */
+.main-header {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent-blue);
+    margin-bottom: 2px;
+    letter-spacing: -0.02em;
+    font-family: var(--font-heading);
+}
+.sub-header {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+/* ── DISCLAIMER ── */
+.disclaimer-box {
+    background: var(--tone-warning-bg);
+    border: 1px solid var(--tone-warning-border);
+    border-left: 3px solid var(--accent-amber);
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 0.84rem;
+    color: var(--tone-warning-text);
+    margin-bottom: 20px;
+}
+
+/* ── PREDICTION CARDS ── */
+.pred-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.25s ease;
+    min-height: 120px;
+    margin-bottom: 14px;
+}
+.pred-card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card);
+}
+.pred-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+.pred-card.high::before { background: var(--gradient-green); }
+.pred-card.moderate::before { background: var(--gradient-blue); }
+.pred-card.low::before { background: var(--gradient-amber); }
+.pred-card .sample-id {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.pred-card .class-name {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    letter-spacing: -0.01em;
+}
+.pred-card .confidence-bar-track {
+    width: 100%;
+    height: 4px;
+    background: var(--border-subtle);
+    border-radius: 2px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+.pred-card .confidence-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.8s ease;
+}
+.pred-card.high .confidence-bar-fill { background: var(--gradient-green); }
+.pred-card.moderate .confidence-bar-fill { background: var(--gradient-blue); }
+.pred-card.low .confidence-bar-fill { background: var(--gradient-amber); }
+.pred-card .confidence-text {
+    font-size: 0.82rem;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.pred-card.high .confidence-text { color: var(--accent-green); }
+.pred-card.moderate .confidence-text { color: var(--accent-blue); }
+.pred-card.low .confidence-text { color: var(--accent-amber); }
+
+/* ── CARD SHADOW DEPTH ── */
+.pred-card, .pipeline-step, .metric-highlight {
+    box-shadow: var(--shadow-card);
+}
+
+/* ── WELCOME PAGE ── */
+.welcome-title {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+    margin-bottom: 12px;
+}
+.welcome-desc {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-bottom: 20px;
+}
+
+/* ── Pipeline steps ── */
+.pipeline-step {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: all 0.2s ease;
+}
+.pipeline-step:hover {
+    border-color: var(--accent-blue);
+    background: var(--bg-elevated);
+}
+.pipeline-step .step-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+    background: var(--bg-elevated);
+}
+.pipeline-step .step-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.pipeline-step .step-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+.pipeline-arrow {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 3px 0;
+    opacity: 0.5;
+}
+
+/* ── BEST MODEL BANNER ── */
+.best-model-banner {
+    background: linear-gradient(135deg, var(--tone-success-bg) 0%, var(--accent-cyan-soft) 100%);
+    border: 1px solid var(--tone-success-border);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.best-model-banner .trophy { font-size: 1.2rem; }
+.best-model-banner .banner-text {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--tone-success-text);
+}
+
+/* ── METRIC HIGHLIGHT CARDS ── */
+.metric-highlight {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    text-align: center;
+}
+.metric-highlight .metric-value {
+    font-size: 1.8rem;
+    font-weight: 800;
+    background: var(--gradient-blue);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-family: var(--font-heading);
+}
+.metric-highlight .metric-label {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+}
+
+/* ── FILE UPLOADER ── */
+[data-testid="stFileUploader"] {
+    background: var(--bg-card) !important;
+    border: 1px dashed var(--border-hover) !important;
+    border-radius: var(--radius) !important;
+    padding: 12px !important;
+}
+[data-testid="stFileUploader"]:hover {
+    border-color: var(--accent-blue) !important;
+}
+[data-testid="stFileUploader"] * {
+    color: var(--text-secondary) !important;
+}
+[data-testid="stFileUploader"] button {
+    background: var(--bg-elevated) !important;
+    border: 1px solid var(--border-subtle) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ── DATAFRAME ── */
+[data-testid="stDataFrame"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius) !important;
+    padding: 8px !important;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+}
+[data-testid="stDataFrame"] table {
+    color: var(--text-secondary) !important;
+}
+[data-testid="stDataFrame"] thead tr th {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+}
+[data-testid="stDataFrame"] tbody tr td {
+    background: var(--bg-card) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* ── SELECT BOXES ── */
+[data-baseweb="select"] {
+    background: var(--bg-card) !important;
+    border-radius: 8px !important;
+}
+[data-baseweb="select"] > div {
+    background: var(--bg-card) !important;
+    border-color: var(--border-subtle) !important;
+}
+[data-baseweb="select"] input,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {
+    color: var(--text-primary) !important;
+}
+[data-baseweb="select"] input::placeholder,
+[data-baseweb="input"] input::placeholder,
+[data-baseweb="textarea"] textarea::placeholder {
+    color: var(--text-muted) !important;
+}
+
+/* ── DOWNLOAD BUTTONS ── */
+.stDownloadButton > button {
+    background: linear-gradient(135deg, var(--accent-blue-soft), var(--accent-cyan-soft)) !important;
+    border: 1px solid var(--accent-blue-border) !important;
+    color: var(--accent-blue) !important;
+    border-radius: 8px !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    padding: 10px 20px !important;
+    transition: all 0.2s ease !important;
+}
+.stDownloadButton > button:hover {
+    background: linear-gradient(135deg, rgba(37,99,235,0.2), rgba(8,145,178,0.18)) !important;
+    border-color: var(--accent-blue) !important;
+    color: var(--accent-blue) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(37,99,235,0.15) !important;
+}
+
+/* ── EXPANDER (Streamlit native fallback) ── */
+[data-testid="stExpander"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+}
+
+/* ── PLOTLY ── */
+.js-plotly-plot .plotly .main-svg {
+    border-radius: var(--radius);
+}
+.stPlotlyChart {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius) !important;
+    padding: 16px !important;
+    box-shadow: var(--shadow-card);
+    margin-bottom: 16px;
+}
+
+/* ── SECTION TITLES ── */
+.section-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    letter-spacing: -0.02em;
+    font-family: var(--font-heading);
+}
+.section-subtitle {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+
+/* ── FOOTER ── */
+.app-footer {
+    text-align: center;
+    padding: 32px 0 16px 0;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 40px;
+}
+.app-footer .footer-brand {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+.app-footer .footer-sub {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+}
+.app-footer a {
+    color: var(--accent-cyan) !important;
+    text-decoration: none !important;
+}
+.app-footer a:hover {
+    text-decoration: underline !important;
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-deepest); }
+::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.6); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,0.9); }
+body.dark-theme ::-webkit-scrollbar-track { background: #0b1220; }
+body.dark-theme ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.5); }
+body.dark-theme ::-webkit-scrollbar-thumb:hover { background: rgba(203,213,225,0.7); }
+
+/* ── HIDE STREAMLIT DEFAULT FOOTER ── */
+footer {visibility: hidden;}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NATIVE STREAMLIT ELEMENT OVERRIDES
+   These are elements Streamlit hard-codes with light colours; we have to
+   target them explicitly so dark-theme is fully consistent.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Alert callouts: st.info / st.warning / st.error / st.success ── */
+[data-testid="stAlert"] {
+    border-radius: 8px !important;
+    border-left-width: 3px !important;
+}
+body.dark-theme [data-testid="stAlert"] {
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-subtle) !important;
+    color: var(--text-secondary) !important;
+}
+body.dark-theme [data-testid="stAlert"] p,
+body.dark-theme [data-testid="stAlert"] span,
+body.dark-theme [data-testid="stAlert"] div {
+    color: var(--text-secondary) !important;
+}
+/* re-apply the left-border accent colour in dark mode */
+body.dark-theme [data-testid="stAlertContainer"],
+body.dark-theme [data-baseweb="notification"] {
+    border-left-color: var(--accent-blue) !important;
+}
+
+/* ── Expander: full container + summary + content area ── */
+[data-testid="stExpander"] details {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stExpander"] details summary {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stExpander"] details summary:hover {
+    background: var(--bg-elevated) !important;
+}
+[data-testid="stExpander"] details[open] summary {
+    border-bottom: 1px solid var(--border-subtle) !important;
+    border-radius: 8px 8px 0 0 !important;
+}
+[data-testid="stExpander"] details > div {
+    background: var(--bg-card) !important;
+    color: var(--text-secondary) !important;
+}
+[data-testid="stExpander"] details > div p,
+[data-testid="stExpander"] details > div span,
+[data-testid="stExpander"] details > div label {
+    color: var(--text-secondary) !important;
+}
+
+/* ── Select / Multiselect: trigger container ── */
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    background: var(--bg-card) !important;
+    border-color: var(--border-subtle) !important;
+    color: var(--text-primary) !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] [class*="placeholder"],
+[data-testid="stMultiSelect"] [data-baseweb="select"] [class*="placeholder"] {
+    color: var(--text-muted) !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] [data-baseweb="tag"],
+[data-testid="stMultiSelect"] [data-baseweb="select"] [data-baseweb="tag"] {
+    background: var(--chip-blue-bg) !important;
+    color: var(--chip-blue-text) !important;
+}
+
+/* ── Select / Multiselect: dropdown popup (rendered in a portal) ── */
+[data-baseweb="popover"],
+[data-baseweb="popover"] [data-baseweb="list"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-hover) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-card) !important;
+}
+[data-baseweb="option"] {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+}
+[data-baseweb="option"]:hover,
+[data-baseweb="option"][aria-selected="true"] {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ── Text inputs and number inputs ── */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+    caret-color: var(--accent-blue) !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus {
+    border-color: var(--accent-blue) !important;
+    box-shadow: 0 0 0 2px var(--accent-blue-soft) !important;
+}
+[data-baseweb="input"],
+[data-baseweb="textarea"] {
+    background: var(--bg-card) !important;
+    border-color: var(--border-subtle) !important;
+}
+
+/* ── Native st.button ── */
+.stButton > button {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s ease !important;
+}
+.stButton > button:hover {
+    background: var(--bg-hover) !important;
+    border-color: var(--accent-blue) !important;
+    color: var(--accent-blue) !important;
+}
+.stButton > button[kind="primary"] {
+    background: var(--accent-blue) !important;
+    color: #ffffff !important;
+    border-color: var(--accent-blue) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    opacity: 0.9 !important;
+}
+
+/* ── st.metric ── */
+[data-testid="stMetric"] {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius) !important;
+    padding: 16px !important;
+}
+[data-testid="stMetric"] label {
+    color: var(--text-muted) !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
+}
+[data-testid="stMetricDelta"] {
+    color: var(--accent-green) !important;
+}
+
+/* ── st.spinner ── */
+body.dark-theme [data-testid="stSpinner"] p,
+body.dark-theme .stSpinner p {
+    color: var(--text-secondary) !important;
+}
+body.dark-theme .stSpinner > div > div {
+    border-color: var(--bg-elevated) !important;
+    border-top-color: var(--accent-blue) !important;
+}
+
+/* ── Streamlit top toolbar / header (hamburger menu, theme button) ── */
+body.dark-theme [data-testid="stToolbar"],
+body.dark-theme [data-testid="stDecoration"] {
+    background: transparent !important;
+}
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    backdrop-filter: none !important;
+}
+
+/* ── Markdown code blocks and inline code ── */
+body.dark-theme code {
+    background: var(--bg-elevated) !important;
+    color: var(--accent-cyan) !important;
+    border: 1px solid var(--border-subtle) !important;
+}
+body.dark-theme pre {
+    background: var(--bg-elevated) !important;
+    border: 1px solid var(--border-subtle) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* ── Progress bar ── */
+[data-testid="stProgress"] > div > div {
+    background: var(--bg-elevated) !important;
+}
+[data-testid="stProgress"] > div > div > div {
+    background: var(--accent-blue) !important;
+}
+
+/* ── Ensure the main column / block containers inherit our background ── */
+body.dark-theme .main .block-container,
+body.dark-theme [data-testid="stMainBlockContainer"] {
+    background: transparent !important;
+}
+body.dark-theme section[data-testid="stSidebar"] {
+    background: var(--bg-sidebar) !important;
+}
+</style>
+"""
+
+# JS: Replace Material Icons ligature text with inline SVGs + apply theme override
+def build_icon_fix_js(theme_override: str) -> str:
+    override = "dark" if theme_override == "dark" else "light"
+    return f"""
+<script>
+(function() {{
+    var override = '{override}';
+    /* Detect Streamlit light/dark theme and set body class */
+    function detectTheme() {{
+        try {{
+            var doc = window.parent.document;
+            doc.body.setAttribute('data-theme-override', override);
+            doc.body.classList.toggle('light-theme', override === 'light');
+            doc.body.classList.toggle('dark-theme', override === 'dark');
+            return;
+        }} catch(e) {{}}
+    }}
+
+    var svgIcons = {{
+        'keyboard_double_arrow_left':
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" '
+            + 'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" '
+            + 'stroke-linejoin="round"><polyline points="11 17 6 12 11 7"/>'
+            + '<polyline points="18 17 13 12 18 7"/></svg>',
+        'keyboard_double_arrow_right':
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" '
+            + 'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" '
+            + 'stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/>'
+            + '<polyline points="6 17 11 12 6 7"/></svg>',
+    }};
+    function fixIcons() {{
+        try {{
+            var doc = window.parent.document;
+            var pat = /^(keyboard_|arrow_|chevron_|expand_|navigate_|menu$|more_)/;
+            var walker = doc.createTreeWalker(
+                doc.body, NodeFilter.SHOW_TEXT, null, false
+            );
+            var nodes = [];
+            while (walker.nextNode()) nodes.push(walker.currentNode);
+            nodes.forEach(function(node) {{
+                var txt = node.textContent.trim();
+                if (!txt || !pat.test(txt)) return;
+                var el = node.parentElement;
+                if (!el || el.tagName === 'BODY' || el.dataset.svgDone) return;
+                if (svgIcons[txt]) {{
+                    el.innerHTML = svgIcons[txt];
+                    el.style.display = 'inline-flex';
+                    el.style.alignItems = 'center';
+                    el.style.justifyContent = 'center';
+                }} else {{
+                    el.style.display = 'none';
+                }}
+                el.dataset.svgDone = '1';
+            }});
+        }} catch(e) {{}}
+    }}
+    detectTheme();
+    fixIcons();
+    setInterval(function() {{ detectTheme(); fixIcons(); }}, 800);
+}})();
+</script>
+"""
+
+
+def build_theme_overrides(theme_mode: str, theme_tokens: dict) -> str:
+    """Return small CSS overrides that are injected after the main stylesheet.
+    This ensures critical native widgets (uploader, dataframe, radios) take the
+    correct colors for the currently selected theme even if Streamlit's native
+    theme class is out-of-sync in the page DOM.
+    """
+    light = theme_mode == "Light"
+    if light:
+        fu_bg = "#ffffff"
+        fu_border = "rgba(15,23,42,0.12)"
+        fu_text = "#0f172a"
+        fu_button_bg = "#f1f5f9"
+        df_header_bg = "#f1f5f9"
+        df_bg = "#ffffff"
+        df_text = "#0f172a"
+        radio_bg = "#ffffff"
+        radio_border = "rgba(15,23,42,0.12)"
+        radio_text = "#0f172a"
+    else:
+        fu_bg = "#0f172a"
+        fu_border = "rgba(148,163,184,0.18)"
+        fu_text = "#e2e8f0"
+        fu_button_bg = "#131d33"
+        df_header_bg = "#131d33"
+        df_bg = "#0f172a"
+        df_text = "#e2e8f0"
+        radio_bg = "#0f172a"
+        radio_border = "rgba(148,163,184,0.18)"
+        radio_text = "#e2e8f0"
+
+    css = f"""
+<style>
+/* Per-theme overrides (injected last to win) */
+[data-testid="stFileUploader"] {{
+    background: {fu_bg} !important;
+    border: 1px dashed {fu_border} !important;
+}}
+[data-testid="stFileUploader"] * {{ color: {fu_text} !important; }}
+[data-testid="stFileUploader"] button {{
+    background: {fu_button_bg} !important;
+    border-color: {fu_border} !important;
+    color: {fu_text} !important;
+}}
+[data-testid="stDataFrame"] {{ background: {df_bg} !important; border-color: {fu_border} !important; }}
+[data-testid="stDataFrame"] table {{ color: {df_text} !important; }}
+[data-testid="stDataFrame"] thead tr th {{ background: {df_header_bg} !important; color: {df_text} !important; }}
+[data-testid="stDataFrame"] tbody tr td {{ background: {df_bg} !important; color: {df_text} !important; }}
+[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] > label[data-baseweb="radio"] {{
+    background: {radio_bg} !important;
+    border: 1px solid {radio_border} !important;
+    color: {radio_text} !important;
+}}
+[data-testid="stToolbar"], [data-testid="stDecoration"] {{ background: transparent !important; box-shadow: none !important; }}
+header[data-testid="stHeader"] {{ background: transparent !important; box-shadow: none !important; }}
+</style>
+"""
+    return css
+
+
+# =====================================================================
+# Streamlit App Layout
+# =====================================================================
+
+
+def main():
+    # What config.toml currently says — used as the "committed" theme on disk.
+    # After a reload this will match session_state so no further reload is triggered.
+    _config_theme = _read_config_theme()
+
+    # Seed session state from disk only on the very first run of this session
+    # (or after a page reload which clears session state).
+    if "theme_mode" not in st.session_state:
+        st.session_state.theme_mode = _config_theme
+
+    st.set_page_config(
+        page_title="MLOmics — Cancer Subtype Classifier",
+        page_icon="🧬",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # With key="theme_mode" on the radio below, Streamlit updates session_state
+    # *before* the rerun fires, so this read is always the current selection.
+    theme_mode = st.session_state.theme_mode
+    theme_tokens = get_theme_tokens("dark" if theme_mode == "Dark" else "light")
+
+    # --- Inject CSS + JS ---
+    # Inject the main stylesheet and then append a small per-theme override block
+    # so native widgets always match the selected theme immediately.
+    st.markdown(CUSTOM_CSS + build_theme_overrides(theme_mode, theme_tokens), unsafe_allow_html=True)
+    theme_override = "light" if theme_mode == "Light" else "dark"
+    components.html(build_icon_fix_js(theme_override), height=0, width=0)
+
+    # --- Sidebar ---
+    with st.sidebar:
+        st.markdown(
+            """
+<div class="sidebar-brand">
+    <div class="sidebar-logo">🧬 MLOmics</div>
+    <div class="sidebar-tagline">
+        Latent-Fusion Multi-Omics<br>Cancer Subtype Classifier
+    </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+        # key= ensures session_state["theme_mode"] is updated *before* the rerun,
+        # so the CSS/JS injection above already uses the correct value.
+        st.radio(
+            "Theme",
+            ["Light", "Dark"],
+            key="theme_mode",
+            horizontal=True,
+        )
+        theme_mode = st.session_state.theme_mode
+        theme_tokens = get_theme_tokens("dark" if theme_mode == "Dark" else "light")
+
+        # Persist preference to config.toml so the *next* server start begins
+        # with the matching Streamlit base theme (avoids flash-of-wrong-theme
+        # on cold load). Runtime theming is handled entirely by the CSS above —
+        # no browser reload required or performed.
+        if theme_mode != _config_theme:
+            _write_streamlit_config(theme_mode)
+
+        st.markdown("---")
+
+        cancer_type = st.radio(
+            "Cancer Type",
+            ["GS-BRCA", "GS-COAD"],
+            help="GS-BRCA: Breast cancer, 5 molecular subtypes. "
+            "GS-COAD: Colon adenocarcinoma, 4 CMS subtypes.",
+        )
+        if cancer_type == "GS-BRCA":
+            st.caption("671 samples · 5 subtypes · 15,366 features")
+        else:
+            st.caption("260 samples · 4 subtypes · 15,200 features")
+
+        st.markdown("---")
+
+        model_choice = st.radio(
+            "Select Model",
+            [
+                "XGBoost (Baseline)",
+                "Intermediate Fusion (Deep)",
+                "Pathway-Aware Fusion (Deep + Bio Prior)",
+            ],
+            help="XGBoost uses early fusion (concatenation). "
+            "Intermediate Fusion uses per-modality encoders -> latent concat -> MLP. "
+            "Pathway-Aware Fusion replaces the mRNA encoder with KEGG pathway-grouped attention.",
+        )
+
+        st.markdown("---")
+
+        _about_cancer = (
+            "GS-BRCA (5 subtypes) · 15,366 features"
+            if cancer_type == "GS-BRCA"
+            else "GS-COAD (4 subtypes) · 15,200 features"
+        )
+        st.markdown(
+            '<details class="custom-details"><summary>{chev} About this project</summary>'
+            '<div class="details-body">'
+            "<strong>MLOmics</strong> is a BSc CS Final Year Project that classifies "
+            "TCGA cancer subtypes using multi-omics data (mRNA, miRNA, Methylation, CNV).<br><br>"
+            "<strong>Models:</strong><br>"
+            "- <strong>XGBoost</strong> — gradient-boosted trees on concatenated features<br>"
+            "- <strong>Intermediate Fusion</strong> — per-modality neural encoders -> "
+            "latent concatenation -> MLP classifier<br>"
+            "- <strong>Pathway-Aware Fusion</strong> — replaces the mRNA encoder with KEGG "
+            "pathway-grouped attention (dual-path: mapped + unmapped genes); best on GS-COAD (F1=0.738)<br><br>"
+            "<strong>Selected:</strong> {cancer}<br><br>"
+            '<a href="https://github.com/deaneeth/multi-omics-cancer-subtype-classifier" '
+            'target="_blank">GitHub Repository</a>'
+            "</div></details>".format(chev=_CHEVRON_SVG, cancer=_about_cancer),
+            unsafe_allow_html=True,
+        )
+
+        if cancer_type == "GS-BRCA":
+            _demo_flow = (
+                "Step 1 — Select <em>XGBoost</em>, upload sample_input_brca.csv. "
+                "Note high-confidence HER2-enriched prediction. SHAP shows ESR1 and UBE2T.<br><br>"
+                "Step 2 — Switch to <em>Intermediate Fusion</em>. Compare predictions. "
+                "IG attribution shows miRNA features drive the deep model.<br><br>"
+                "Step 3 — Model Comparison tab: IntermediateFusion has best F1 (0.808) on BRCA. "
+                "Latent space clusters show learned representations. Cell cycle and p53 pathways validated."
+            )
+        else:
+            _demo_flow = (
+                "Step 1 — Select <em>XGBoost</em>, upload sample_input_coad.csv. "
+                "View CMS subtype prediction with confidence scores.<br><br>"
+                "Step 2 — Switch to <em>Intermediate Fusion</em>. Compare predictions. "
+                "Note: COAD is a harder task with fewer samples (260 vs 671).<br><br>"
+                "Step 3 — Model Comparison tab: PathwayAwareFusion has best F1 (0.738) on COAD. "
+                "Removing miRNA actually improves COAD performance (+0.133 F1)."
+            )
+        st.markdown(
+            '<details class="custom-details"><summary>{chev} How to use</summary>'
+            '<div class="details-body">'
+            "<strong>Quick Start:</strong><br>"
+            "1. Select a cancer type above<br>"
+            "2. Select a model, then upload a CSV (or download the sample)<br>"
+            "3. View predictions and explanations<br>"
+            "4. Explore the Model Comparison tab<br><br>"
+            "<strong>Recommended Demo Flow:</strong><br><br>"
+            "{flow}"
+            "</div></details>".format(chev=_CHEVRON_SVG, flow=_demo_flow),
+            unsafe_allow_html=True,
+        )
+
+        if cancer_type == "GS-BRCA":
+            _findings_body = (
+                "<strong>BRCA Performance:</strong><br>"
+                "- RF: F1=0.602 | XGBoost: F1=0.794<br>"
+                "- <strong>IntermediateFusion: F1=0.808</strong> (best)<br>"
+                "- PathwayAwareFusion: F1=0.801<br><br>"
+                "<strong>Biological Validation:</strong><br>"
+                "- Cell cycle pathway (p=3.07e-5)<br>"
+                "- p53 signaling (p=1.29e-2)<br>"
+                "- 57 GO Biological Process terms enriched<br><br>"
+                "<strong>Insight:</strong> IG attribution shows miRNA features "
+                "dominate the deep model. Per-modality encoders outperform flat concatenation."
+            )
+        else:
+            _findings_body = (
+                "<strong>COAD Performance:</strong><br>"
+                "- RF: F1=0.608 | XGBoost: F1=0.636<br>"
+                "- IntermediateFusion: F1=0.669<br>"
+                "- <strong>PathwayAwareFusion: F1=0.738</strong> (best)<br><br>"
+                "<strong>Key Insight — miRNA Artifact:</strong><br>"
+                "Removing miRNA <em>improves</em> COAD F1 by <strong>+0.133</strong>. "
+                "miRNA contributes noise due to small sample size (260 samples).<br><br>"
+                "<strong>Structural Limitation:</strong><br>"
+                "COAD Class 3 (CMS4) has only 4 samples in some folds — "
+                "per-class metrics may be unreliable for this subtype.<br><br>"
+                "<strong>Insight:</strong> Pathway priors (PathwayAwareFusion) help "
+                "most on COAD — structured biology compensates for limited data."
+            )
+        st.markdown(
+            '<details class="custom-details"><summary>{chev} Key Findings</summary>'
+            '<div class="details-body">'
+            "{body}"
+            "</div></details>".format(chev=_CHEVRON_SVG, body=_findings_body),
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("---")
+        st.caption("v0.5 · Seeds: 42 · 5-fold CV")
+
+    # --- Main content ---
+    st.markdown(
+        '<p class="main-header">🧬 MLOmics Cancer Subtype Classifier</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p class="sub-header">'
+        "Latent-Fusion Multi-Omics Classifier for Cancer Subtype Prediction"
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Disclaimer
+    st.markdown(
+        '<div class="disclaimer-box">'
+        "⚠️ <strong>Academic research prototype.</strong> "
+        "Not for clinical use. Results are for educational and research purposes only. "
+        "This tool should not be used for medical diagnosis or treatment decisions."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Load shared resources (keyed on selected cancer type)
+    try:
+        cfg = load_config_json(cancer_type)
+        load_demo_artifacts(cancer_type)
+    except Exception as e:
+        st.error(f"Failed to load model artifacts for {cancer_type}: {e}")
+        st.stop()
+
+    # --- Tabs ---
+    tab_predict, tab_compare = st.tabs(["Prediction", "Model Comparison"])
+
+    # =================================================================
+    # TAB 1: PREDICTION
+    # =================================================================
+    with tab_predict:
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type=["csv"],
+            help="Upload a CSV with features as rows and samples as columns.",
+            label_visibility="collapsed",
+        )
+
+        if uploaded_file is None:
+            # ------- WELCOME PANEL -------
+            col_left, col_right = st.columns([3, 2], gap="large")
+
+            with col_left:
+                st.markdown(
+                    """
+<div class="hero-block">
+    <div class="hero-title">
+        <span style="color: var(--text-primary);">Welcome to </span>
+        <span class="brand-gradient">MLOmics</span>
+    </div>
+    <div class="hero-subtitle">
+        Upload a multi-omics CSV file to classify cancer subtypes using machine learning.
+        The system supports tree-based (XGBoost) and deep learning (Intermediate Fusion,
+        Pathway-Aware Fusion) models trained on the MLOmics benchmark dataset.
+    </div>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+                _mirna_count = cfg["modality_dims"].get("mirna", 366)
+                _n_subtypes = cfg.get("n_classes") or len(cfg.get("class_names", {}))
+                _total_feats = cfg.get(
+                    "total_features", sum(cfg["modality_dims"].values())
+                )
+                _suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
+                st.markdown(
+                    '<div class="chip-row">'
+                    '<span class="chip chip-blue">mRNA (5,000)</span>'
+                    '<span class="chip chip-cyan">miRNA ({mirna})</span>'
+                    '<span class="chip chip-green">Methylation (5,000)</span>'
+                    '<span class="chip chip-amber">CNV (5,000)</span>'
+                    "</div>"
+                    '<div class="chip-meta">'
+                    'Cancer type: <strong>{ct}</strong>'
+                    " — {nsub} molecular subtypes · {nfeat:,} total features"
+                    "</div>".format(
+                        mirna=_mirna_count,
+                        ct=cancer_type,
+                        nsub=_n_subtypes,
+                        nfeat=_total_feats,
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+                sample_bytes = load_sample_csv_bytes(cancer_type)
+                if sample_bytes:
+                    st.download_button(
+                        "📥 Download sample CSV",
+                        data=sample_bytes,
+                        file_name=f"sample_input_{_suffix}.csv",
+                        mime="text/csv",
+                    )
+
+            with col_right:
+                render_pipeline_diagram()
+
+            st.markdown("---")
+            st.markdown("##### ↑ Upload a CSV file above to get started")
+
+        else:
+            # ------- PREDICTION FLOW -------
+            try:
+                # --- Parse upload and normalize orientation ---
+                uploaded_file.seek(0)
+                raw_df = pd.read_csv(uploaded_file)
+                st.caption(
+                    f"Raw CSV: {raw_df.shape[0]} rows x {raw_df.shape[1]} columns"
+                )
+
+                expected_features = cfg["feature_names"]
+                data_df = normalize_uploaded_dataframe(uploaded_file, expected_features)
+                st.caption(
+                    f"Normalized input: {data_df.shape[0]} samples x "
+                    f"{data_df.shape[1]} features"
+                )
+
+                # --- Inference preprocessing: impute + per-modality scaling ---
+                X_scaled = preprocess_uploaded_csv(data_df, cfg, cancer_type)
+
+                # --- Predict ---
+                section_divider()
+                st.markdown(
+                    '<div class="section-title">🎯 Prediction Results</div>',
+                    unsafe_allow_html=True,
+                )
+
+                if model_choice == "XGBoost (Baseline)":
+                    xgb_model = load_xgb_model(cancer_type)
+                    preds, probs = predict_xgboost(xgb_model, X_scaled)
+                elif model_choice == "Intermediate Fusion (Deep)":
+                    fusion_model = load_fusion_model(cancer_type)
+                    preds, probs = predict_fusion(fusion_model, X_scaled, cfg)
+                else:  # Pathway-Aware Fusion
+                    pw_model = load_pathway_fusion_model(cancer_type)
+                    preds, probs = predict_fusion(pw_model, X_scaled, cfg)
+
+                # Display prediction cards
+                sample_ids = list(data_df.index)
+                n_samples = len(sample_ids)
+
+                if n_samples <= 3:
+                    cols = st.columns(n_samples)
+                    for i, sid in enumerate(sample_ids):
+                        pred_class = int(preds[i])
+                        class_name = cfg["class_names"].get(
+                            str(pred_class), f"Class {pred_class}"
+                        )
+                        confidence = float(probs[i, pred_class])
+                        with cols[i]:
+                            render_prediction_card(sid, class_name, confidence)
+                else:
+                    for i, sid in enumerate(sample_ids):
+                        pred_class = int(preds[i])
+                        class_name = cfg["class_names"].get(
+                            str(pred_class), f"Class {pred_class}"
+                        )
+                        confidence = float(probs[i, pred_class])
+                        render_prediction_card(sid, class_name, confidence)
+
+                # --- Export predictions ---
+                export_df = pd.DataFrame(
+                    {
+                        "Sample": sample_ids,
+                        "Predicted Subtype": [
+                            cfg["class_names"].get(str(int(p)), f"Class {p}")
+                            for p in preds
+                        ],
+                        "Confidence": [
+                            float(probs[i, int(preds[i])]) for i in range(n_samples)
+                        ],
+                    }
+                )
+                st.download_button(
+                    "📥 Export predictions as CSV",
+                    data=export_df.to_csv(index=False),
+                    file_name="mlomics_predictions.csv",
+                    mime="text/csv",
+                )
+
+                # --- Confidence chart ---
+                section_divider()
+                st.markdown(
+                    '<div class="section-title">Confidence Distribution</div>',
+                    unsafe_allow_html=True,
+                )
+                sample_to_explain = 0
+                if n_samples > 1:
+                    sample_to_explain = st.selectbox(
+                        "Select sample for detailed view",
+                        range(n_samples),
+                        format_func=lambda idx: sample_ids[idx],
+                    )
+                render_confidence_chart(probs, cfg, theme_tokens, sample_to_explain)
+
+                # --- SHAP Explanation ---
+                section_divider()
+                st.markdown(
+                    '<div class="section-title">Feature Importance (SHAP)</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    "The waterfall plot shows which genomic features influenced "
+                    "this prediction. **Red bars** push toward the predicted class; "
+                    "**blue bars** push away from it. Features are ranked by "
+                    "absolute impact."
+                )
+
+                st.markdown(
+                    '<details class="custom-details custom-details-main">'
+                    "<summary>{chev} What is SHAP?</summary>"
+                    '<div class="details-body">'
+                    "<strong>SHAP (SHapley Additive exPlanations)</strong> is a "
+                    "game-theoretic approach to explain individual predictions. Each "
+                    "feature receives a contribution score showing how much it pushed "
+                    "the prediction toward or away from a particular class."
+                    "</div></details>".format(chev=_CHEVRON_SVG),
+                    unsafe_allow_html=True,
+                )
+
+                top_shap_features = []
+
+                if model_choice == "XGBoost (Baseline)":
+                    st.caption(
+                        "Computing TreeSHAP waterfall plot for the selected sample..."
+                    )
+                    with st.spinner("Running TreeSHAP..."):
+                        xgb_model = load_xgb_model(cancer_type)
+                        xgb_explanation = render_shap_waterfall(
+                            xgb_model, X_scaled, cfg, theme_tokens, sample_to_explain
+                        )
+                    class_shap = np.asarray(xgb_explanation.values)
+                    top_idx = np.argsort(np.abs(class_shap))[::-1][:8]
+                    top_shap_features = [
+                        {
+                            "feature": cfg["feature_names"][i],
+                            "importance": float(np.abs(class_shap[i])),
+                            "direction": "positive" if class_shap[i] > 0 else "negative",
+                        }
+                        for i in top_idx
+                    ]
+                else:
+                    if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
+                        st.info(
+                            "🧬 This model uses KEGG biological pathway priors to group mRNA genes before fusion. "
+                            "It achieves the best F1 score on GS-COAD (0.738) by leveraging "
+                            "pathway-based structural regularisation."
+                        )
+                    fusion_attr = load_fusion_attributions(cancer_type)
+                    selected_sid = sample_ids[sample_to_explain]
+
+                    if fusion_attr and selected_sid in fusion_attr["sample_ids"]:
+                        attr_idx = fusion_attr["sample_ids"].index(selected_sid)
+                        top_feats = fusion_attr["top_features_per_sample"][attr_idx][
+                            :15
+                        ]
+                        top_shap_features = [
+                            {
+                                "feature": f.get("feature_name", ""),
+                                "importance": float(
+                                    f.get(
+                                        "abs_attribution",
+                                        abs(float(f.get("attribution", 0.0))),
+                                    )
+                                ),
+                                "direction": (
+                                    "positive"
+                                    if float(f.get("attribution", 0.0)) > 0
+                                    else "negative"
+                                ),
+                            }
+                            for f in top_feats[:8]
+                        ]
+                        top_feats_rev = list(reversed(top_feats))
+
+                        fig_attr = go.Figure(
+                            go.Bar(
+                                x=[f["attribution"] for f in top_feats_rev],
+                                y=[f["feature_name"] for f in top_feats_rev],
+                                orientation="h",
+                                marker_color=[
+                                    theme_tokens["plotly_highlight"]
+                                    if f["attribution"] > 0
+                                    else theme_tokens["plotly_muted"]
+                                    for f in top_feats_rev
+                                ],
+                                text=[
+                                    f"{f['attribution']:+.4f}" for f in top_feats_rev
+                                ],
+                                textposition="outside",
+                                textfont=dict(size=10),
+                            )
+                        )
+                        fig_attr.update_layout(
+                            title=dict(
+                                text="Integrated Gradients Attribution (Top 15)",
+                                font=dict(size=14),
+                            ),
+                            xaxis_title="Attribution Score",
+                            height=500,
+                        )
+                        apply_plotly_theme(fig_attr, theme_tokens)
+                        st.plotly_chart(fig_attr, use_container_width=True)
+
+                        mod_counts = {}
+                        for f in fusion_attr["top_features_per_sample"][attr_idx][:20]:
+                            mod_counts[f["modality"]] = (
+                                mod_counts.get(f["modality"], 0) + 1
+                            )
+                        mod_text = " · ".join(
+                            f"{m}: {c}"
+                            for m, c in sorted(mod_counts.items(), key=lambda x: -x[1])
+                        )
+                        st.caption(f"Top 20 features by modality: {mod_text}")
+                        _attr_note = (
+                            "Red bars push toward predicted class; blue bars push away. "
+                            "Attribution via Integrated Gradients (Captum)."
+                        )
+                        if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
+                            _attr_note += (
+                                " Attributions shown are from the Intermediate Fusion model "
+                                "(same feature space — both models share identical input features)."
+                            )
+                        st.caption(_attr_note)
+                    elif fusion_attr:
+                        _suf = "brca" if cancer_type == "GS-BRCA" else "coad"
+                        st.info(
+                            f"Precomputed attributions available for: "
+                            f"{', '.join(fusion_attr['sample_ids'])}. "
+                            f"Upload sample_input_{_suf}.csv to see them."
+                        )
+                    else:
+                        st.info(
+                            "Run `python scripts/precompute_fusion_attribution.py` "
+                            "to enable Integrated Gradients attribution display."
+                        )
+
+                # --- LLM Research Summary ---
+                section_divider()
+                st.subheader("🔬 Research Summary")
+                st.caption("Plain-language interpretation of the above results")
+
+                selected_pred_class = int(preds[sample_to_explain])
+                selected_class_name = cfg["class_names"].get(
+                    str(selected_pred_class), f"Class {selected_pred_class}"
+                )
+                selected_probs = probs[sample_to_explain]
+                proba_dict = {
+                    cfg["class_names"].get(str(i), f"Class {i}"): float(selected_probs[i])
+                    for i in range(len(selected_probs))
+                }
+
+                model_type_for_summary = {
+                    "XGBoost (Baseline)": "XGBoost",
+                    "Intermediate Fusion (Deep)": "IntermediateFusion",
+                    "Pathway-Aware Fusion (Deep + Bio Prior)": "PathwayAwareFusion",
+                }.get(model_choice, model_choice)
+
+                top_pathways = []
+                enrichment = load_enrichment_results()
+                cancer_short = cancer_type.replace("GS-", "")
+                enrichment_source = (
+                    "xgb" if model_choice == "XGBoost (Baseline)" else "fusion"
+                )
+                kegg_key = f"kegg_{enrichment_source}_{cancer_short}"
+                if enrichment and kegg_key in enrichment:
+                    enrich_df = enrichment[kegg_key]
+                    if "Term" in enrich_df.columns:
+                        top_pathways = (
+                            enrich_df["Term"].dropna().astype(str).head(5).tolist()
+                        )
+                    elif "pathway" in enrich_df.columns:
+                        top_pathways = (
+                            enrich_df["pathway"].dropna().astype(str).head(5).tolist()
+                        )
+
+                if get_groq_api_key():
+                    with st.spinner("Generating research summary..."):
+                        summary = generate_research_summary(
+                            cancer_type=cancer_type,
+                            predicted_class=selected_class_name,
+                            confidence=float(selected_probs[selected_pred_class]),
+                            all_proba=proba_dict,
+                            top_shap_features=top_shap_features,
+                            top_pathways=top_pathways,
+                            model_type=model_type_for_summary,
+                        )
+
+                    if summary:
+                        st.info(summary)
+                        st.caption(
+                            "⚠️ Summary generated by AI (Llama 3 via Groq). "
+                            "Always verify against primary results above. "
+                            "Not for clinical use."
+                        )
+                    else:
+                        st.warning(
+                            "Summary unavailable - API call failed. See results above."
+                        )
+                else:
+                    st.caption(
+                        "ℹ️ Set the GROQ_API_KEY environment variable or add it to `.env` "
+                        "to enable AI summaries."
+                    )
+
+            except Exception as e:
+                st.error(
+                    "Could not process the uploaded file. Please check the format "
+                    "matches the sample CSV."
+                )
+                with st.expander("Technical details"):
+                    st.code(str(e))
+
+    # =================================================================
+    # TAB 2: MODEL COMPARISON
+    # =================================================================
+    with tab_compare:
+        st.markdown(
+            '<div class="section-title">Model Performance Comparison</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "Patient-level stratified 5-fold cross-validation across all "
+            "trained models."
+        )
+
+        comp_df = load_model_comparison()
+        if comp_df is None:
+            st.warning("No model comparison data found.")
+        else:
+            # --- Filter by cancer type (defaults to sidebar selection) ---
+            cancer_types = sorted(comp_df["Cancer"].unique())
+            _ct_options = ["All"] + cancer_types
+            _ct_default_idx = (
+                _ct_options.index(cancer_type) if cancer_type in _ct_options else 0
+            )
+            selected_cancer = st.selectbox(
+                "Filter by cancer type",
+                _ct_options,
+                index=_ct_default_idx,
+                key="comp_cancer_filter",
+            )
+
+            # --- Best model banner (scoped to selected cancer) ---
+            _banner_df = (
+                comp_df[comp_df["Cancer"] == selected_cancer]
+                if selected_cancer != "All"
+                else comp_df[comp_df["Cancer"] == cancer_type]
+            )
+            best_row = _banner_df.loc[_banner_df["F1_mean"].idxmax()]
+            st.markdown(
+                '<div class="best-model-banner">'
+                '<span class="trophy">🏆</span>'
+                '<span class="banner-text">Best model: {model} on '
+                "{cancer} — F1 = {f1:.3f} +/- {std:.3f}</span>"
+                "</div>".format(
+                    model=best_row["Model"],
+                    cancer=best_row["Cancer"],
+                    f1=best_row["F1_mean"],
+                    std=best_row["F1_std"],
+                ),
+                unsafe_allow_html=True,
+            )
+
+            # --- Metric highlight cards (scoped to selected cancer) ---
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            with mc1:
+                st.markdown(
+                    '<div class="metric-highlight">'
+                    '<div class="metric-value">{:.3f}</div>'
+                    '<div class="metric-label">Best F1 Score</div>'
+                    "</div>".format(best_row["F1_mean"]),
+                    unsafe_allow_html=True,
+                )
+            with mc2:
+                st.markdown(
+                    '<div class="metric-highlight">'
+                    '<div class="metric-value">{:.3f}</div>'
+                    '<div class="metric-label">Precision</div>'
+                    "</div>".format(best_row["Precision_mean"]),
+                    unsafe_allow_html=True,
+                )
+            with mc3:
+                st.markdown(
+                    '<div class="metric-highlight">'
+                    '<div class="metric-value">{:.3f}</div>'
+                    '<div class="metric-label">Recall</div>'
+                    "</div>".format(best_row["Recall_mean"]),
+                    unsafe_allow_html=True,
+                )
+            with mc4:
+                if (
+                    "auc_mean" in _banner_df.columns
+                    and _banner_df["auc_mean"].notna().any()
+                ):
+                    best_auc_row = _banner_df.loc[_banner_df["auc_mean"].idxmax()]
+                    st.markdown(
+                        '<div class="metric-highlight">'
+                        '<div class="metric-value">{:.3f}</div>'
+                        '<div class="metric-label">Best AUC ({model})</div>'
+                        "</div>".format(
+                            best_auc_row["auc_mean"], model=best_auc_row["Model"]
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<div class="metric-highlight">'
+                        '<div class="metric-value">—</div>'
+                        '<div class="metric-label">Best AUC</div>'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("")  # spacer
+
+            display_df = comp_df.copy()
+            if selected_cancer != "All":
+                display_df = display_df[display_df["Cancer"] == selected_cancer]
+
+            # --- Styled table ---
+            format_dict = {
+                c: "{:.3f}"
+                for c in display_df.columns
+                if c.endswith("_mean") or c.endswith("_std")
+            }
+            _highlight_cols = ["F1_mean", "Precision_mean", "Recall_mean"]
+            if "auc_mean" in display_df.columns:
+                _highlight_cols.append("auc_mean")
+            st.dataframe(
+                display_df.style.format(format_dict).highlight_max(
+                    subset=_highlight_cols,
+                    color=theme_tokens["table_highlight"],
+                ),
+                use_container_width=True,
+            )
+            st.caption(
+                "Higher is better for all metrics. "
+                "Highlighted cells indicate best per column."
+            )
+
+            # --- Plotly grouped bar chart ---
+            _metric_options = ["F1", "Precision", "Recall", "AUC", "NMI", "ARI"]
+            _metric_col_map = {
+                "F1": ("F1_mean", "F1_std"),
+                "Precision": ("Precision_mean", "Precision_std"),
+                "Recall": ("Recall_mean", "Recall_std"),
+                "AUC": ("auc_mean", "auc_std"),
+                "NMI": ("NMI_mean", "NMI_std"),
+                "ARI": ("ARI_mean", "ARI_std"),
+            }
+            # Only offer AUC option if the column exists
+            _available_metrics = [
+                m
+                for m in _metric_options
+                if _metric_col_map[m][0] in display_df.columns
+            ]
+            _bar_metric = st.selectbox(
+                "Chart metric",
+                _available_metrics,
+                index=0,
+                key="bar_metric_selector",
+            )
+            _mean_col, _std_col = _metric_col_map[_bar_metric]
+            st.markdown(f"#### {_bar_metric} Comparison")
+            fig = go.Figure()
+
+            models = display_df["Model"].unique()
+            for i, model_name in enumerate(models):
+                model_data = display_df[display_df["Model"] == model_name]
+                _y = model_data[_mean_col]
+                _err = model_data[_std_col] if _std_col in model_data.columns else None
+                fig.add_trace(
+                    go.Bar(
+                        name=model_name,
+                        x=model_data["Cancer"],
+                        y=_y,
+                        error_y=dict(
+                            type="data",
+                            array=_err.tolist() if _err is not None else [],
+                            visible=_err is not None,
+                        ),
+                        marker_color=CHART_COLORS[i % len(CHART_COLORS)],
+                        text=[f"{v:.3f}" for v in _y],
+                        textposition="outside",
+                        textfont=dict(size=12),
+                    )
+                )
+
+            fig.update_layout(
+                barmode="group",
+                yaxis_title=f"{_bar_metric} (mean +/- std)",
+                xaxis_title="Cancer Type",
+                height=480,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                ),
+            )
+            apply_plotly_theme(fig, theme_tokens)
+            fig.update_traces(marker=dict(line=dict(width=0)))
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- ROC Curves ---
+            st.markdown("#### ROC Curves")
+            st.caption(
+                "Micro-averaged OVR ROC curves for each model (best fold per model)."
+            )
+            _roc_cancer = selected_cancer if selected_cancer != "All" else cancer_type
+            _roc_models = {
+                "XGBoost": ("xgb", "brca" if "BRCA" in _roc_cancer else "coad"),
+                "RandomForest": ("rf", "brca" if "BRCA" in _roc_cancer else "coad"),
+                "IntermediateFusion": (
+                    "fusion",
+                    "brca" if "BRCA" in _roc_cancer else "coad",
+                ),
+                "PathwayAwareFusion": (
+                    "pathway_fusion",
+                    "brca" if "BRCA" in _roc_cancer else "coad",
+                ),
+            }
+            # Find best fold for each model using metrics CSVs
+            _roc_best_folds = {}
+            for _rm, (_key, _suf) in _roc_models.items():
+                _m_path = os.path.join(
+                    RESULTS_DIR, "metrics", f"{_key}_{_suf}_metrics.csv"
+                )
+                if os.path.exists(_m_path):
+                    _mdf = pd.read_csv(_m_path)
+                    _mdf["f1"] = pd.to_numeric(_mdf["f1"], errors="coerce")
+                    _mdf = _mdf.dropna(subset=["f1"])
+                    _mdf = _mdf[
+                        ~_mdf["fold"].astype(str).str.contains(r"\+/-", na=False)
+                    ]
+                    if len(_mdf) > 0:
+                        _roc_best_folds[_rm] = int(
+                            _mdf.loc[_mdf["f1"].idxmax(), "fold"]
+                        )
+
+            try:
+                from sklearn.preprocessing import label_binarize
+                from sklearn.metrics import roc_curve, auc as sk_auc
+
+                fig_roc = go.Figure()
+                fig_roc.add_trace(
+                    go.Scatter(
+                        x=[0, 1],
+                        y=[0, 1],
+                        mode="lines",
+                        line=dict(dash="dash", color=theme_tokens["plotly_axis"]),
+                        showlegend=False,
+                        name="Random",
+                    )
+                )
+                _roc_colors = CHART_COLORS[:4]
+                for _ci, (_rm, (_key, _suf)) in enumerate(_roc_models.items()):
+                    _fold = _roc_best_folds.get(_rm)
+                    if _fold is None:
+                        continue
+                    _npz_path = os.path.join(
+                        RESULTS_DIR,
+                        "metrics",
+                        f"{_key}_{_suf}_fold{_fold}_predictions.npz",
+                    )
+                    if not os.path.exists(_npz_path):
+                        continue
+                    _npz = np.load(_npz_path)
+                    if "y_prob" not in _npz:
+                        continue
+                    _yt = _npz["y_true"]
+                    _yp = _npz["y_prob"]
+                    _nc = _yp.shape[1]
+                    _yt_bin = label_binarize(_yt, classes=list(range(_nc)))
+                    if _nc == 2:
+                        _yt_bin = np.hstack([1 - _yt_bin, _yt_bin])
+                    _fpr, _tpr, _ = roc_curve(_yt_bin.ravel(), _yp.ravel())
+                    _roc_auc = sk_auc(_fpr, _tpr)
+                    fig_roc.add_trace(
+                        go.Scatter(
+                            x=_fpr,
+                            y=_tpr,
+                            mode="lines",
+                            name=f"{_rm} (AUC={_roc_auc:.3f})",
+                            line=dict(
+                                color=_roc_colors[_ci % len(_roc_colors)], width=2
+                            ),
+                        )
+                    )
+                fig_roc.update_layout(
+                    title=f"ROC Curves — {_roc_cancer} (Best Fold per Model, Micro-Avg OVR)",
+                    xaxis_title="False Positive Rate",
+                    yaxis_title="True Positive Rate",
+                    height=460,
+                    legend=dict(
+                        orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5
+                    ),
+                )
+                apply_plotly_theme(fig_roc, theme_tokens)
+                st.plotly_chart(fig_roc, use_container_width=True)
+            except Exception as _roc_err:
+                st.info(f"ROC curves unavailable: {_roc_err}")
+
+            # --- Per-fold AUC breakdown ---
+            _auc_csv = os.path.join(RESULTS_DIR, "metrics", "auc_scores.csv")
+            if os.path.exists(_auc_csv):
+                with st.expander("Per-fold AUC breakdown"):
+                    _auc_df = pd.read_csv(_auc_csv)
+                    _auc_filt = _auc_df[_auc_df["cancer"] == _roc_cancer]
+                    if len(_auc_filt) > 0:
+                        try:
+                            _pivot = _auc_filt.pivot(
+                                index="model", columns="fold", values="auc"
+                            ).round(4)
+                            st.dataframe(_pivot, use_container_width=True)
+                            st.caption(
+                                "NaN in GS-COAD fold 0 is expected: class 3 (CMS4) absent from that validation fold."
+                            )
+                        except Exception:
+                            st.dataframe(
+                                _auc_filt[["model", "fold", "auc"]].round(4),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+            # --- Radar chart ---
+            st.markdown("#### Multi-Metric Profile")
+            metric_cols = [
+                "Precision_mean",
+                "Recall_mean",
+                "F1_mean",
+                "NMI_mean",
+                "ARI_mean",
+            ]
+            metric_labels = ["Precision", "Recall", "F1", "NMI", "ARI"]
+            if "auc_mean" in comp_df.columns:
+                metric_cols.append("auc_mean")
+                metric_labels.append("AUC")
+
+            radar_cancer = selected_cancer if selected_cancer != "All" else cancer_type
+            radar_df = comp_df[comp_df["Cancer"] == radar_cancer]
+
+            if len(radar_df) == 0:
+                st.info("No data for selected cancer type in radar view.")
+            else:
+                fig_radar = go.Figure()
+                for i, model_name in enumerate(radar_df["Model"].unique()):
+                    row = radar_df[radar_df["Model"] == model_name].iloc[0]
+                    values = [row[c] for c in metric_cols] + [row[metric_cols[0]]]
+                    labels = metric_labels + [metric_labels[0]]
+
+                    fig_radar.add_trace(
+                        go.Scatterpolar(
+                            r=values,
+                            theta=labels,
+                            fill="toself",
+                            name=model_name,
+                            opacity=0.6,
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)]),
+                        )
+                    )
+
+                fig_radar.update_layout(
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, 1],
+                            gridcolor=theme_tokens["plotly_grid"],
+                            color=theme_tokens["plotly_font"],
+                        ),
+                        angularaxis=dict(
+                            gridcolor=theme_tokens["plotly_grid"],
+                            color=theme_tokens["plotly_font"],
+                        ),
+                        bgcolor="rgba(0,0,0,0)",
+                    ),
+                    height=500,
+                    title=dict(
+                        text=f"Multi-Metric Profile ({radar_cancer})",
+                        font=dict(size=15),
+                    ),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="top",
+                        y=-0.15,
+                        xanchor="center",
+                        x=0.5,
+                        font=dict(size=11),
+                    ),
+                    margin=dict(t=40, b=80, l=80, r=80),
+                )
+                apply_plotly_theme(fig_radar, theme_tokens)
+                if selected_cancer == "All":
+                    st.caption(
+                        f"Showing {cancer_type} (matches sidebar). "
+                        "Select a specific cancer type above to compare the other."
+                    )
+                st.plotly_chart(fig_radar, use_container_width=True)
+
+        # =============================================================
+        # LATENT SPACE VISUALIZATION
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Latent Space Visualization</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "2D projection of the fusion model's learned latent representations. "
+            "Tight clusters indicate the model learned meaningful per-subtype features."
+        )
+
+        latent_data = load_latent_space_data(cancer_type)
+        if latent_data:
+            import plotly.express as px
+
+            # Cancer-specific file has exactly one top-level key (the cancer type)
+            lat_cancer = list(latent_data.keys())[0]
+            cl = latent_data[lat_cancer]
+            cn_map = cl.get("class_names", {})
+
+            lat_method = "t-SNE"
+            coords = cl["tsne"]
+            label_names = [
+                cn_map.get(str(int(l)), f"Class {int(l)}") for l in cl["true_labels"]
+            ]
+            correct = [
+                int(t) == int(p)
+                for t, p in zip(cl["true_labels"], cl["predicted_labels"])
+            ]
+            n_ok = sum(correct)
+            n_tot = len(correct)
+
+            lc1, lc2 = st.columns(2)
+            with lc1:
+                df1 = pd.DataFrame(
+                    {"x": coords["x"], "y": coords["y"], "Subtype": label_names}
+                )
+                fig1 = px.scatter(
+                    df1,
+                    x="x",
+                    y="y",
+                    color="Subtype",
+                    title=f"{lat_method} — True Subtype",
+                    color_discrete_sequence=CHART_COLORS,
+                )
+                fig1.update_traces(marker=dict(size=7, opacity=0.8))
+                fig1.update_layout(
+                    xaxis_title=f"{lat_method}-1",
+                    yaxis_title=f"{lat_method}-2",
+                    height=450,
+                    legend=dict(
+                        orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5
+                    ),
+                )
+                apply_plotly_theme(fig1, theme_tokens)
+                st.plotly_chart(fig1, use_container_width=True)
+
+            with lc2:
+                acc_labels = ["Correct" if c else "Misclassified" for c in correct]
+                pred_names = [
+                    cn_map.get(str(int(p)), f"Class {int(p)}")
+                    for p in cl["predicted_labels"]
+                ]
+                df2 = pd.DataFrame(
+                    {
+                        "x": coords["x"],
+                        "y": coords["y"],
+                        "Result": acc_labels,
+                        "True": label_names,
+                        "Predicted": pred_names,
+                    }
+                )
+                fig2 = px.scatter(
+                    df2,
+                    x="x",
+                    y="y",
+                    color="Result",
+                    title=f"{lat_method} — Correct vs Misclassified ({n_ok}/{n_tot})",
+                    color_discrete_map={
+                        "Correct": theme_tokens["plotly_green"],
+                        "Misclassified": theme_tokens["plotly_red"],
+                    },
+                    hover_data=["True", "Predicted"],
+                )
+                fig2.update_traces(marker=dict(size=7, opacity=0.8))
+                fig2.update_layout(
+                    xaxis_title=f"{lat_method}-1",
+                    yaxis_title=f"{lat_method}-2",
+                    height=450,
+                    legend=dict(
+                        orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5
+                    ),
+                )
+                apply_plotly_theme(fig2, theme_tokens)
+                st.plotly_chart(fig2, use_container_width=True)
+
+            st.caption(
+                f"Latent: {cl['latent_dim']}D projected to 2D via {lat_method}. "
+                f"Fold {cl['fold']} (best F1). Accuracy: {n_ok}/{n_tot} ({n_ok / n_tot:.1%})."
+            )
+        else:
+            st.info(
+                "Run `python scripts/precompute_latent_space.py` to enable latent space visualization."
+            )
+
+        # =============================================================
+        # TRAINING CONVERGENCE
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Training Convergence</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Training and validation loss/F1 curves across epochs. "
+            "Early stopping (patience=10) captures the best checkpoint."
+        )
+
+        import glob as _glob
+
+        _tc_opts = ["GS-BRCA", "GS-COAD"]
+        tc_cancer = st.selectbox(
+            "Cancer type",
+            _tc_opts,
+            index=_tc_opts.index(cancer_type),
+            key="tc_cancer",
+        )
+        cancer_key = tc_cancer.replace("GS-", "")
+        tc_files = sorted(
+            _glob.glob(
+                os.path.join(
+                    RESULTS_DIR, "plots", f"*fusion*training*{cancer_key}*.png"
+                )
+            )
+        )
+        if tc_files:
+            for tf in tc_files:
+                label = (
+                    os.path.basename(tf).replace(".png", "").replace("_", " ").title()
+                )
+                st.image(tf, caption=label)
+            st.caption(
+                "Mild train < val loss gap is expected and controlled by dropout + early stopping."
+            )
+        else:
+            st.info(f"Training curve plots not found for {tc_cancer}.")
+
+        # =============================================================
+        # CONFUSION MATRICES
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Confusion Matrices</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Best-fold confusion matrices showing per-class prediction accuracy."
+        )
+
+        cm_c1, cm_c2 = st.columns(2)
+        with cm_c1:
+            cm_model = st.selectbox(
+                "Select model",
+                ["XGBoost", "RandomForest", "IntermediateFusion", "PathwayAwareFusion"],
+                key="cm_model",
+            )
+        with cm_c2:
+            _cm_opts = ["GS-BRCA", "GS-COAD"]
+            cm_cancer = st.selectbox(
+                "Select cancer type",
+                _cm_opts,
+                index=_cm_opts.index(cancer_type),
+                key="cm_cancer",
+            )
+
+        model_file_map = {
+            "XGBoost": "xgb",
+            "RandomForest": "rf",
+            "IntermediateFusion": "fusion",
+            "PathwayAwareFusion": "pathway_fusion",
+        }
+        cm_key = model_file_map.get(cm_model, cm_model.lower())
+        cancer_short = cm_cancer.replace("GS-", "")
+        cm_path = os.path.join(
+            RESULTS_DIR, "plots", f"confusion_matrix_{cm_key}_{cancer_short}.png"
+        )
+        if os.path.exists(cm_path):
+            st.image(cm_path, caption=f"{cm_model} — {cm_cancer} (Best Fold)")
+        else:
+            st.info(f"Confusion matrix not found for {cm_model} on {cm_cancer}.")
+
+        # =============================================================
+        # BIOLOGICAL VALIDATION
+        # =============================================================
+        section_divider()
+        st.markdown(
+            '<div class="section-title">Biological Validation</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption("KEGG and GO pathway enrichment on top model-derived features.")
+
+        enrichment = load_enrichment_results()
+        if enrichment:
+            enr_c1, enr_c2 = st.columns(2)
+
+            for col_obj, cancer in [(enr_c1, "BRCA"), (enr_c2, "COAD")]:
+                with col_obj:
+                    st.markdown(f"**{cancer} — Fusion Model (IG)**")
+                    kegg_key = f"kegg_fusion_{cancer}"
+                    if kegg_key in enrichment:
+                        kegg_df = enrichment[kegg_key]
+                        top_kegg = kegg_df.nsmallest(5, "Adjusted P-value")[
+                            ["Term", "Adjusted P-value"]
+                        ].copy()
+                        top_kegg.columns = ["Pathway", "adj. p-value"]
+                        top_kegg["adj. p-value"] = top_kegg["adj. p-value"].apply(
+                            lambda x: f"{x:.2e}"
+                        )
+                        st.dataframe(
+                            top_kegg, use_container_width=True, hide_index=True
+                        )
+                        st.caption(
+                            f"{len(kegg_df)} significant KEGG pathways (adj. p < 0.05)"
+                        )
+                    else:
+                        if cancer == "COAD":
+                            st.info(
+                                "No statistically significant pathway enrichment was found "
+                                "for GS-COAD. This is expected — COAD has only 260 samples "
+                                "and ANOVA pre-selection limits the gene pool. See Key "
+                                "Findings in the sidebar for context."
+                            )
+                        else:
+                            st.info(
+                                f"No significant KEGG pathways (adj. p < 0.05) for {cancer}."
+                            )
+
+            # Known pathway validation (follows sidebar cancer type)
+            _val_cancer_short = "BRCA" if cancer_type == "GS-BRCA" else "COAD"
+            val = enrichment.get(f"validation_{_val_cancer_short}")
+            if val:
+                st.markdown("")
+                st.markdown(
+                    f"**Known Cancer Pathway Validation ({cancer_type} — Fusion KEGG):**"
+                )
+                fusion_kegg_val = val.get("fusion_kegg", {})
+                found = []
+                not_found = []
+                for pathway, info in fusion_kegg_val.items():
+                    if info.get("found"):
+                        pv = info.get("p_value")
+                        found.append(
+                            f"  ✅ {pathway} (p={pv:.2e})" if pv else f"  ✅ {pathway}"
+                        )
+                    else:
+                        not_found.append(f"  — {pathway}")
+                if found:
+                    st.markdown("\n".join(found))
+                else:
+                    st.info(
+                        f"No canonical cancer pathways were enriched for {cancer_type}."
+                    )
+                if not_found:
+                    with st.expander("Pathways not enriched"):
+                        st.markdown("\n".join(not_found))
+
+            # Pathway attention scores
+            if "attention_scores" in enrichment:
+                section_divider()
+                st.markdown(
+                    '<div class="section-title">Pathway Attention (PathwayAwareFusion)</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Top pathways by learned attention weight from the pathway-aware model."
+                )
+
+                attn_df = enrichment["attention_scores"]
+                for cancer_label in ["GS-BRCA", "GS-COAD"]:
+                    cancer_attn = attn_df[attn_df["cancer_type"] == cancer_label]
+                    if len(cancer_attn) > 0:
+                        st.markdown(f"**{cancer_label} — Top 10 Attended Pathways:**")
+                        top_attn = cancer_attn.nlargest(10, "mean_attention_weight")[
+                            ["pathway", "mean_attention_weight"]
+                        ].copy()
+                        top_attn.columns = ["Pathway", "Attention Weight"]
+                        top_attn["Attention Weight"] = top_attn[
+                            "Attention Weight"
+                        ].apply(lambda x: f"{x:.5f}")
+                        st.dataframe(
+                            top_attn, use_container_width=True, hide_index=True
+                        )
+        else:
+            st.info("Pathway enrichment results not available.")
+
+        # =============================================================
+        # ABLATION STUDIES
+        # =============================================================
+        abl_path = os.path.join(RESULTS_DIR, "metrics", "ablation_modality_removal.csv")
+        if os.path.exists(abl_path):
+            section_divider()
+            st.markdown(
+                '<div class="section-title">Ablation Studies</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "Impact of removing individual omics modalities on fusion model performance."
+            )
+
+            abl_df = pd.read_csv(abl_path)
+            fig_abl = go.Figure()
+            for cancer_val in abl_df["cancer"].unique():
+                cdata = abl_df[abl_df["cancer"] == cancer_val]
+                fig_abl.add_trace(
+                    go.Bar(
+                        name=str(cancer_val),
+                        x=cdata["removed_modality"],
+                        y=cdata["f1_mean"],
+                        error_y=dict(
+                            type="data",
+                            array=cdata["f1_std"].tolist(),
+                            visible=True,
+                        ),
+                    )
+                )
+            fig_abl.update_layout(
+                title="F1 Score: Effect of Modality Removal",
+                barmode="group",
+                xaxis_title="Removed Modality",
+                yaxis_title="F1 Score",
+                height=400,
+            )
+            apply_plotly_theme(fig_abl, theme_tokens)
+            fig_abl.update_traces(marker=dict(line=dict(width=0)))
+            st.plotly_chart(fig_abl, use_container_width=True)
+            st.caption(
+                "Bars show F1 when each modality is removed. "
+                "Larger drop = more important modality."
+            )
+
+        fcomp_path = os.path.join(
+            RESULTS_DIR, "metrics", "ablation_fusion_comparison.csv"
+        )
+        if os.path.exists(fcomp_path):
+            st.markdown("**Early vs Intermediate Fusion:**")
+            fcomp_df = pd.read_csv(fcomp_path)
+            fmt = {
+                c: "{:.3f}"
+                for c in fcomp_df.columns
+                if c.startswith("f1")
+                or c.startswith("precision")
+                or c.startswith("recall")
+            }
+            st.dataframe(
+                fcomp_df.style.format(fmt),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # Missing Modality Robustness
+        missing_csv_path = os.path.join(
+            RESULTS_DIR, "metrics", "ablation_missing_modality.csv"
+        )
+        missing_img_path = os.path.join(
+            RESULTS_DIR, "plots", "missing_modality_curve.png"
+        )
+        if os.path.exists(missing_csv_path):
+            section_divider()
+            st.markdown("#### Missing Modality Robustness")
+            st.caption(
+                "F1 score degradation as random modalities are zeroed out (simulated missingness)."
+            )
+            _mm_df = pd.read_csv(missing_csv_path)
+            if os.path.exists(missing_img_path):
+                st.image(missing_img_path, use_container_width=True)
+            else:
+                # Build interactive Plotly chart from CSV
+                fig_mm = go.Figure()
+                for cancer_val in _mm_df["cancer"].unique():
+                    cdata = _mm_df[_mm_df["cancer"] == cancer_val].sort_values(
+                        "missing_rate"
+                    )
+                    fig_mm.add_trace(
+                        go.Scatter(
+                            name=f"GS-{cancer_val}",
+                            x=(cdata["missing_rate"] * 100).tolist(),
+                            y=cdata["f1_mean"].tolist(),
+                            mode="lines+markers",
+                            error_y=dict(
+                                type="data",
+                                array=cdata["f1_std"].tolist(),
+                                visible=True,
+                            ),
+                        )
+                    )
+                fig_mm.update_layout(
+                    title="Missing Modality Robustness",
+                    xaxis_title="Missing Rate (%)",
+                    yaxis_title="F1 Score",
+                    height=380,
+                )
+                apply_plotly_theme(fig_mm, theme_tokens)
+                st.plotly_chart(fig_mm, use_container_width=True)
+            st.caption(
+                "BRCA shows robustness up to 20% missingness. "
+                "COAD degrades earlier due to smaller sample size (260 samples)."
+            )
+
+    # =================================================================
+    # FOOTER
+    # =================================================================
+    st.markdown(
+        """
+        <div class="app-footer">
+            <div class="footer-brand">MLOmics</div>
+            <div class="footer-sub">
+                BSc Computer Science Final Year Project<br>
+                Latent-Fusion Multi-Omics Classifier for Cancer Subtype Prediction<br>
+                <a href="https://github.com/deaneeth/multi-omics-cancer-subtype-classifier"
+                   target="_blank">GitHub Repository</a> ·
+                Powered by PyTorch, XGBoost, SHAP<br>
+                <em>Academic research prototype. Not for clinical use.</em>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+if __name__ == "__main__":
+    main()

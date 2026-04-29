@@ -1,0 +1,41 @@
+rank,cancer_type,pathway,mean_attention_weight,std_attention_weight
+1,GS-BRCA,Axon guidance,0.003735,0.00129
+2,GS-BRCA,Graft-versus-host disease,0.003723,0.00181
+3,GS-BRCA,IL-17 signaling pathway,0.003691,0.000829
+4,GS-BRCA,Cocaine addiction,0.003684,0.000745
+5,GS-BRCA,Primary bile acid biosynthesis,0.003666,0.001047
+6,GS-BRCA,Ferroptosis,0.00364,0.000846
+7,GS-BRCA,Progesterone-mediated oocyte maturation,0.003631,0.000719
+8,GS-BRCA,Taurine and hypotaurine metabolism,0.003622,0.000482
+9,GS-BRCA,Melanoma,0.003615,0.001203
+10,GS-BRCA,Lysine degradation,0.003612,0.00129
+11,GS-BRCA,Antigen processing and presentation,0.003605,0.000816
+12,GS-BRCA,Adrenergic signaling in cardiomyocytes,0.003587,0.0008
+13,GS-BRCA,Cholinergic synapse,0.003582,0.000708
+14,GS-BRCA,Toll-like receptor signaling pathway,0.003574,0.00089
+15,GS-BRCA,Riboflavin metabolism,0.00356,0.001011
+16,GS-BRCA,Fructose and mannose metabolism,0.003557,0.000819
+17,GS-BRCA,Synthesis and degradation of ketone bodies,0.003553,0.001331
+18,GS-BRCA,NF-kappa B signaling pathway,0.00354,0.000572
+19,GS-BRCA,Glycerolipid metabolism,0.003539,0.00055
+20,GS-BRCA,Terpenoid backbone biosynthesis,0.003535,0.000794
+1,GS-COAD,Alcoholism,0.003729,0.001033
+2,GS-COAD,Other types of O-glycan biosynthesis,0.003722,0.000948
+3,GS-COAD,Nitrogen metabolism,0.003722,0.000828
+4,GS-COAD,Dilated cardiomyopathy,0.003705,0.001037
+5,GS-COAD,Oxidative phosphorylation,0.003671,0.000838
+6,GS-COAD,Adherens junction,0.003661,0.001034
+7,GS-COAD,Platelet activation,0.003658,0.000689
+8,GS-COAD,Inflammatory bowel disease,0.003657,0.000548
+9,GS-COAD,Ubiquitin mediated proteolysis,0.003654,0.001075
+10,GS-COAD,Notch signaling pathway,0.003647,0.001182
+11,GS-COAD,Intestinal immune network for IgA production,0.003628,0.001333
+12,GS-COAD,Fatty acid biosynthesis,0.003627,0.001019
+13,GS-COAD,Tyrosine metabolism,0.003623,0.000871
+14,GS-COAD,Calcium signaling pathway,0.003621,0.000691
+15,GS-COAD,Sulfur metabolism,0.003619,0.001083
+16,GS-COAD,Prostate cancer,0.003608,0.000469
+17,GS-COAD,Toxoplasmosis,0.0036,0.000655
+18,GS-COAD,Aminoacyl-tRNA biosynthesis,0.0036,0.000935
+19,GS-COAD,Amyotrophic lateral sclerosis,0.003594,0.000604
+20,GS-COAD,Synaptic vesicle cycle,0.003591,0.000565

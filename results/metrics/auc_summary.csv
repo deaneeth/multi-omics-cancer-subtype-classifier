@@ -1,0 +1,9 @@
+model,cancer,auc_mean,auc_std
+IntermediateFusion,GS-BRCA,0.9631,0.0137
+IntermediateFusion,GS-COAD,0.9534,0.0080
+PathwayAwareFusion,GS-BRCA,0.9659,0.0167
+PathwayAwareFusion,GS-COAD,0.9542,0.0252
+RandomForest,GS-BRCA,0.9708,0.0089
+RandomForest,GS-COAD,0.9321,0.0208
+XGBoost,GS-BRCA,0.9703,0.0148
+XGBoost,GS-COAD,0.9105,0.0509

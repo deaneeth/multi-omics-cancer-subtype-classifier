@@ -8,6 +8,45 @@ Tagged releases mark `dev → main` milestone merges.
 ## [Unreleased]
 _Changes on `dev` not yet merged to `main`._
 
+### Changed
+
+- **Code quality**: Deduplicated `compute_class_weights` and `dataframes_to_numpy` helpers into `src/utils.py`; both training scripts now import from there.
+- **Data integrity**: Replaced stale `CONTEXT.md` docstring references with `config.yaml` in `src/data_loader.py` and `src/utils.py`.
+- **XGBoost objective**: Corrected `multi:softmax` → `multi:softprob` in `scripts/train_baselines.py` (source fix; existing trained models are unchanged).
+- **SHAP performance**: `compute_shap_explanation` now computes SHAP only for the selected sample row instead of all uploaded rows.
+- **Preprocessing docs**: Added ANOVA pre-selection bias warning to `src/preprocessing.py` module docstring.
+- **Encoding**: Re-encoded `requirements.txt` from UTF-16 LE to UTF-8 for cross-platform portability.
+- **Tests**: Added `tests/test_cv_folds.py` (cross-fold leakage guard) and a train-only scaler test in `tests/test_preprocessing.py`.
+- **README**: Added full conda setup, pipeline commands, and expected results table.
+
+### Notable ablation finding
+
+- GS-COAD: Removing the miRNA modality **improves** F1 by +0.133 (from 0.669 to 0.802), suggesting miRNA introduces noise for COAD subtype discrimination. Documented in `results/metrics/ablation_modality_removal.csv`.
+
+---
+
+## [v0.5-demo] - 2026-04-12
+
+### Added
+
+- Dual-cancer Streamlit demo flow for GS-BRCA and GS-COAD.
+- Cancer-specific demo artifacts under `app/model_artifacts/`.
+- Pathway-aware fusion demo support alongside XGBoost and intermediate fusion.
+- Per-fold AUC outputs: `results/metrics/auc_scores.csv` and `auc_summary.csv`.
+- ROC curve display in the demo and pathway-fusion confusion matrices.
+- Preprocessing verification report in `docs/preprocessing_verification_report.md`.
+
+### Changed
+
+- Demo comparison table now includes AUC alongside F1, precision, recall, NMI, and ARI.
+- Legacy un-suffixed demo artifacts were removed in favor of per-cancer files.
+- Streamlit app layout was updated for the restored dual-cancer demo.
+
+### Notes
+
+- The PathwayAwareFusion demo falls back to intermediate-fusion attributions when pathway-specific IG artifacts are not precomputed.
+- COAD fold 0 AUC may be NaN when the CMS4 class is absent from the validation split.
+
 ---
 
 ## [v0.4-analysis] - 2026-03-06

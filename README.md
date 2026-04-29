@@ -6,47 +6,154 @@
 
 ## Overview
 
-End-to-end reproducible multi-omics machine learning pipeline for cancer subtype classification using the [MLOmics benchmark dataset](https://figshare.com/articles/dataset/MLOmics_Cancer_Multi-Omics_Database_for_Machine_Learning/28729127).
+MLOmics is an end-to-end, reproducible multi-omics pipeline for cancer subtype classification on the [MLOmics benchmark dataset](https://figshare.com/articles/dataset/MLOmics_Cancer_Multi-Omics_Database_for_Machine_Learning/28729127).
 
-**Cancer Types:** GS-BRCA (breast, 5 subtypes) · GS-COAD (colon, 4 subtypes)
+It evaluates two cancer cohorts with four omics modalities:
 
-**Modalities:** mRNA (5000) · miRNA (200) · DNA Methylation (5000) · CNV (5000)
+- GS-BRCA: 5 subtypes (Basal-like, HER2-enriched, Luminal A, Luminal B, Normal-like)
+- GS-COAD: 4 subtypes (CMS1–CMS4)
+- Modalities: mRNA, miRNA, DNA methylation, CNV
+
+The project includes early-fusion baselines, intermediate fusion, and a pathway-aware fusion variant that injects KEGG pathway structure into the mRNA encoder. The Streamlit demo supports both cancers and all three deployed model families.
 
 ## Models
 
 | Model | Approach |
 |---|---|
-| XGBoost | Early fusion baseline |
-| Random Forest | Early fusion baseline |
-| Intermediate Fusion | Per-modality encoders → latent concat → MLP classifier |
+| XGBoost | Early fusion baseline on concatenated features |
+| Random Forest | Early fusion baseline on concatenated features |
+| EarlyFusionMLP | Ablation baseline on concatenated features |
+| IntermediateFusion | Per-modality encoders → latent concat → MLP classifier |
+| PathwayAwareFusion | KEGG-guided mRNA encoder + standard modality encoders |
+
+## Expected Results (5-fold CV, macro F1 ± std)
+
+| Model | GS-BRCA F1 | GS-BRCA AUC | GS-COAD F1 | GS-COAD AUC |
+|---|---|---|---|---|
+| XGBoost | 0.794 ± 0.047 | 0.970 ± 0.015 | 0.636 ± 0.115 | 0.911 ± 0.051 |
+| RandomForest | 0.602 ± 0.083 | 0.971 ± 0.009 | 0.608 ± 0.073 | 0.932 ± 0.021 |
+| IntermediateFusion | 0.808 ± 0.050 | 0.963 ± 0.014 | 0.669 ± 0.094 | 0.953 ± 0.008 |
+| PathwayAwareFusion | 0.801 ± 0.069 | 0.966 ± 0.017 | 0.738 ± 0.142 | 0.954 ± 0.025 |
+
+Full per-fold metrics are in `results/metrics/model_comparison.csv`.
+
+## Setup
+
+All commands must be run from the **repository root**.
+
+### 1. Create and activate the conda environment
+
+```bash
+conda create -n mlomics python=3.11 -y
+conda activate mlomics
+pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu118
+pip install torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118
+pip install torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+```
+
+### 2. Download the dataset
+
+Follow the instructions in `data/DATA_README.md` to download raw data from Figshare into `data/raw/`. The expected layout is:
+
+```
+data/raw/GS-BRCA/Top/GS-BRCA_mRNA_top.csv
+data/raw/GS-BRCA/Top/GS-BRCA_miRNA_top.csv
+data/raw/GS-BRCA/Top/GS-BRCA_methy_top.csv
+data/raw/GS-BRCA/Top/GS-BRCA_cnv_top.csv
+data/raw/GS-COAD/Top/  (same pattern)
+```
+
+### 3. Run the full pipeline
+
+```bash
+# Preprocess and verify (writes data/preprocessed/)
+jupyter nbconvert --to notebook --execute notebooks/01_preprocessing.ipynb
+
+# Train baselines (XGBoost + RandomForest, 5-fold CV)
+python scripts/train_baselines.py
+
+# Train fusion models
+python scripts/train_fusion.py
+python scripts/train_pathway_fusion.py
+
+# Explainability and ablations
+python scripts/run_explainability.py
+python scripts/run_ablations.py
+
+# Compute AUC scores
+python scripts/compute_auc.py
+
+# Export demo artifacts and launch Streamlit app
+python scripts/prepare_demo_artifacts.py
+streamlit run app/streamlit_app.py
+```
+
+### Enabling AI Research Summaries (Optional)
+
+1. Get a free API key at https://console.groq.com
+2. Set the environment variable before running the app:
+
+   Local `.env` file:
+   ```bash
+   GROQ_API_KEY=gsk_your_key_here
+   ```
+
+   Windows PowerShell:
+   ```powershell
+   $env:GROQ_API_KEY = "gsk_your_key_here"
+   streamlit run app/streamlit_app.py
+   ```
+
+   Mac/Linux:
+   ```bash
+   export GROQ_API_KEY="gsk_your_key_here"
+   streamlit run app/streamlit_app.py
+   ```
+
+3. The summary panel appears automatically after each prediction.
+   If the key is not set, the app works normally without summaries.
+
+### 4. Quick smoke-test (toy data, no GPU required)
+
+```bash
+python scripts/train_baselines.py --toy
+python scripts/train_fusion.py --toy --epochs 5
+python -m pytest tests/ -v
+```
+
+## Key Outputs
+
+- `results/metrics/model_comparison.csv` — F1, precision, recall, NMI, ARI, AUC across all models.
+- `results/metrics/auc_scores.csv` and `auc_summary.csv` — per-fold and mean AUC values.
+- `results/shap/` and `results/enrichment/` — SHAP values and KEGG pathway enrichment.
+- `results/plots/` — training curves, confusion matrices, model comparison bar charts.
+- `app/model_artifacts/` — per-cancer demo artifacts used by the Streamlit app.
+- `docs/preprocessing_verification_report.md` — preprocessing checks and documented limitations.
 
 ## Project Structure
 
 ```
-├── data/           # Raw & processed data (gitignored)
-├── src/            # Source modules (data_loader, preprocessing, models, evaluation, explainability, utils)
-├── notebooks/      # Exploration & visualization notebooks
-├── models/         # Saved model artifacts per fold
-├── results/        # Metrics, plots, SHAP values, enrichment outputs
-├── app/            # Streamlit demo application
-├── scripts/        # Training & evaluation CLI scripts
-├── tests/          # Test suite
-├── docs/           # Final report, slides, demo video
-├── config.yaml     # All hyperparameters, paths, seeds
-└── experiment_log.csv  # Experiment tracking
+├── app/            # Streamlit demo application and demo artifacts
+├── data/           # Raw, toy, and derived data files
+├── docs/           # Verification and reporting documents
+├── models/         # Saved model checkpoints per fold
+├── notebooks/      # Exploration, preprocessing, and analysis notebooks
+├── results/        # Metrics, plots, SHAP, enrichment, and QC outputs
+├── scripts/        # Training, evaluation, attribution, and export scripts
+├── src/            # Core data, preprocessing, model, and evaluation code
+├── tests/          # Unit tests
+├── config.yaml     # Project configuration and hyperparameters
+└── experiment_log.csv  # Logged experiments
 ```
-
-## Setup
-
-Setup instructions coming soon.
 
 ## Tech Stack
 
-Python 3.9 · PyTorch ≥2.0 · scikit-learn ≥1.2 · XGBoost ≥1.7 · SHAP ≥0.42 · Captum ≥0.6 · gseapy ≥1.0 · Streamlit ≥1.28
+Python 3.11 · PyTorch 2.7 (CUDA 11.8) · scikit-learn · XGBoost · SHAP · Captum · gseapy · Streamlit
 
 ## Author
 
-**Dineth** — BSc Computer Science Final Year Project
+**Dineth Hettiarachchi** — BSc Computer Science Final Year Project
 
 ---
 
