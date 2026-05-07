@@ -16,7 +16,7 @@ def test_load_modality_toy_returns_samples_by_features(config: dict) -> None:
     assert isinstance(frame, pd.DataFrame)
     assert frame.shape[0] > 0
     assert frame.shape[1] > 0
-    assert frame.index.dtype == object
+    assert pd.api.types.is_string_dtype(frame.index) or frame.index.dtype == object
 
 
 def test_load_labels_toy_aligns_to_mrna_index(config: dict) -> None:
