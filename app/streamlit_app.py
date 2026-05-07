@@ -2956,7 +2956,7 @@ def main():
             _calib_cancer_short = "brca" if "BRCA" in _calib_cancer else "coad"
             _model_prefix_map = {
                 "XGBoost": "xgb", "RandomForest": "rf",
-                "IntermediateFusion": "fusion", "PathwayFusion": "pathway_fusion",
+                "IntermediateFusion": "fusion", "PathwayAwareFusion": "pathway_fusion",
             }
             _calib_cols = st.columns(2)
             _col_idx = 0

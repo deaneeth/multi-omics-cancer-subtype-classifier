@@ -31,7 +31,7 @@ MODEL_PREFIX_MAP = {
     "XGBoost": "xgb",
     "RandomForest": "rf",
     "IntermediateFusion": "fusion",
-    "PathwayFusion": "pathway_fusion",
+    "PathwayAwareFusion": "pathway_fusion",
 }
 CANCERS = {"brca": "GS-BRCA", "coad": "GS-COAD"}
 N_CLASSES = {"brca": 5, "coad": 4}

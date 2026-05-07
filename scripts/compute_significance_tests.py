@@ -30,7 +30,7 @@ MODEL_FILE_MAP = {
     "XGBoost":            "xgb_{cancer}_metrics.csv",
     "RandomForest":       "rf_{cancer}_metrics.csv",
     "IntermediateFusion": "fusion_{cancer}_metrics.csv",
-    "PathwayFusion":      "pathway_fusion_{cancer}_metrics.csv",
+    "PathwayAwareFusion": "pathway_fusion_{cancer}_metrics.csv",
 }
 CANCERS = ["brca", "coad"]
 CANCER_DISPLAY = {"brca": "GS-BRCA", "coad": "GS-COAD"}
@@ -38,7 +38,7 @@ CANCER_DISPLAY = {"brca": "GS-BRCA", "coad": "GS-COAD"}
 # Headline pairs to highlight in the printed summary
 HEADLINE_PAIRS = [
     ("IntermediateFusion", "XGBoost"),
-    ("IntermediateFusion", "PathwayFusion"),
+    ("IntermediateFusion", "PathwayAwareFusion"),
     ("IntermediateFusion", "RandomForest"),
 ]
 

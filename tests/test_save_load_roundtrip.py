@@ -1,9 +1,10 @@
 """T1.7 — Model checkpoint save/load round-trip test.
 
-Trains IntermediateFusionModel for 1 epoch on toy GS-BRCA data, saves the
-checkpoint in the same format used by train_fusion.py, reloads it from disk,
-and asserts that predictions on a fixed batch are identical within floating-
-point tolerance.
+Performs a single optimisation step (one mini-batch) on toy GS-BRCA data
+to move the weights away from initialisation, saves the checkpoint in the
+same format used by train_fusion.py, reloads it from disk, and asserts
+that predictions on a fixed batch are identical within floating-point
+tolerance.
 """
 
 import tempfile

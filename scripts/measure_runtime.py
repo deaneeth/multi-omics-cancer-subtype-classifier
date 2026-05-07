@@ -17,11 +17,9 @@ import gc
 import os
 import time
 import tracemalloc
-from pathlib import Path
-
 import sys
-from pathlib import Path as _Path
-sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -42,7 +40,16 @@ TOY_CANCER = "GS-BRCA"
 
 
 def _peak_mb(fn, *args, **kwargs):
-    """Run fn(*args, **kwargs), return (result, peak_memory_mb)."""
+    """Run fn(*args, **kwargs), return (result, elapsed_s, peak_memory_mb).
+
+    NOTE: peak_memory_mb is measured via tracemalloc and reflects
+    Python-heap allocations only.  Native memory used by NumPy arrays,
+    PyTorch tensors, or XGBoost internals is NOT captured, so the
+    reported value will be lower than the true process RSS (especially
+    for tree-based models).  The CSV column ``peak_memory_mb`` should
+    be interpreted as a lower bound on Python-side allocation, not total
+    RAM usage.
+    """
     gc.collect()
     tracemalloc.start()
     t0 = time.perf_counter()

@@ -365,7 +365,7 @@ def main():
             f"  {s['cancer_type']}: {s['total_features']} features, "
             f"{s['n_classes']} classes, "
             f"XGB fold={s['xgb_best_fold']}, Fusion fold={s['fusion_best_fold']}, "
-            f"PathwayFusion fold={pw_fold_str}"
+            f"PathwayAwareFusion fold={pw_fold_str}"
         )
         print(f"    Modality dims: {s['modality_dims']}")
 
