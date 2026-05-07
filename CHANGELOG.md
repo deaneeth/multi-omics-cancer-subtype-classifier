@@ -5,8 +5,14 @@ All notable changes to the MLOmics project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 Tagged releases mark `dev → main` milestone merges.
 
-## [Unreleased]
-_Changes on `dev` not yet merged to `main`._
+## [v1.1-audit] - 2026-05-07
+
+### Added
+- **Audit**: Comprehensive data integrity checks, including `verify_label_alignment.py` and checksum guards.
+- **Evaluation**: Calibration analysis (`calibration_analysis.py`) and significance tests (`compute_significance_tests.py`).
+- **Performance**: End-to-end inference computational cost measurement (`measure_runtime.py`).
+- **Tests**: Extensive test suite covering preprocessing equivalence, CV folds enforcement, and label alignment.
+- **Docs**: New structured documentation including `PROJECT_FILE_TREE.md`, `DATA_CARD.md`, and an updated `PROJECT_STORY.md`.
 
 ### Changed
 
