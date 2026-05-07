@@ -61,8 +61,12 @@ def ece_mce(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = N_BINS) -> tup
     mce = 0.0
     n = len(y_true)
 
-    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
-        mask = (confidences >= lo) & (confidences < hi)
+    for i, (lo, hi) in enumerate(zip(bin_edges[:-1], bin_edges[1:])):
+        # Last bin is right-inclusive to capture confidence == 1.0
+        if i == n_bins - 1:
+            mask = (confidences >= lo) & (confidences <= hi)
+        else:
+            mask = (confidences >= lo) & (confidences < hi)
         if mask.sum() == 0:
             continue
         acc = correct[mask].mean()
@@ -109,8 +113,11 @@ def plot_reliability_diagram(
         confidences = y_prob.max(axis=1)
         correct = (y_prob.argmax(axis=1) == y_true).astype(float)
         accs = []
-        for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
-            mask = (confidences >= lo) & (confidences < hi)
+        for i, (lo, hi) in enumerate(zip(bin_edges[:-1], bin_edges[1:])):
+            if i == N_BINS - 1:
+                mask = (confidences >= lo) & (confidences <= hi)
+            else:
+                mask = (confidences >= lo) & (confidences < hi)
             accs.append(correct[mask].mean() if mask.sum() > 0 else np.nan)
         all_accs.append(accs)
 

@@ -309,3 +309,99 @@ Added supervisor placeholder to README Author section.
 
 All 32 tests passing. Branch: `fix/audit-followup-2026-05`.  
 Ready for merge to `dev` (then `main` via squash merge per git workflow).
+
+---
+
+## Copilot Fix Pass — 2026-05-07
+
+Branch: `fix/copilot-post-audit`  
+Author: Dineth Hettiarachchi
+
+Five issues flagged by GitHub Copilot during the v1.1-audit PR review.
+
+### CF1 — Normalize Windows path separators in label checksum JSON (Findings 4+5)
+
+**Commits:** `3a5e061`
+
+**Problem:** `data/label_file_checksums.json` stored `data/toy\BRCA_label_num_toy.csv`
+(backslash). On Linux/macOS `os.path.exists()` treats the whole string as a single
+filename component, so `test_label_file_checksum_matches_recorded` silently skipped
+instead of asserting — the T1.3 alignment guard was inert on POSIX systems.
+
+**Fix:**
+- `scripts/verify_label_alignment.py`: added `pathlib` import; write path as
+  `Path(label_path).as_posix()` when building the checksum record dict.
+- `tests/test_label_alignment.py`: normalize any backslashes before `Path()` via
+  `record["path"].replace("\\", "/")` — `Path()` on POSIX treats `\` as a literal
+  character, not a separator, so normalization is required as a defensive guard;
+  use `label_path.exists()`.
+- `data/label_file_checksums.json`: regenerated — backslash entry replaced with
+  forward-slash path.
+
+**Verification:** `pytest tests/test_label_alignment.py -v -s` — 4 PASSED, 0 SKIPPED.
+JSON POSIX check: `python -c "..."` — PASS: all paths are POSIX.
+
+---
+
+### CF2 — Make `verify_cancer()` return type consistent (Finding 3)
+
+**Commit:** `bc346b1`
+
+**Problem:** `verify_cancer()` was annotated `-> bool` but returned `(passed, label_path)`
+on the success path and bare `True` on early-return paths. Caller used
+`isinstance(result, tuple)` to distinguish them — fragile and misleading.
+
+**Fix:**
+- Signature changed to `-> tuple[bool, str | None]`.
+- All early-return paths changed from `return True` to `return True, None`.
+- Success path: `return passed, str(Path(label_path).as_posix())`.
+- Caller simplified to `passed, label_path = verify_cancer(...)` with no `isinstance`.
+
+**Verification:** Script runs without TypeError. `grep isinstance.*tuple` → no matches.
+`pytest tests/test_label_alignment.py -v` → 4 PASSED.
+
+---
+
+### CF3 — Make last calibration bin inclusive to capture confidence=1.0 (Finding 1)
+
+**Commit:** `3eeb517`
+
+**Problem:** `ece_mce()` and `plot_reliability_diagram()` in `scripts/calibration_analysis.py`
+used `(confidences < hi)` for all bins including the last. Samples with
+`confidence == 1.0` fell outside every bin and were silently excluded from ECE/MCE
+and the reliability diagram.
+
+**Fix:** Last bin (`i == n_bins - 1`) now uses `(confidences <= hi)` in both functions.
+
+**Verification:** `calibration_summary.csv` regenerated. Max ECE delta vs pre-fix = 0.0000
+(confidence=1.0 samples absent in softmax output — no thesis table update required).
+Per-model total sample counts verified: BRCA=671, COAD=260 across 5 folds, matching
+documented counts — no samples unaccounted for.
+
+---
+
+### CF4 — Update `measure_runtime.py` docstring to match `TRAIN_EPOCHS = 10` (Finding 2)
+
+**Commit:** `4a5e07c`
+
+**Problem:** Module docstring said "5 epochs" but `TRAIN_EPOCHS = 10` is the constant
+actually used. No matching references found in README.md or AUDIT_FIXES_LOG.md.
+
+**Fix:** Changed docstring line to "10 epochs". Constant unchanged.
+
+**Verification:** `grep "5 epoch|five epoch" scripts/measure_runtime.py` → 0 matches.
+
+---
+
+### Acceptance Gate Results
+
+| Check | Result |
+|---|---|
+| 1. `pytest -v` count == 32 | PASS — 32 passed |
+| 2. Alignment tests: 4 PASSED, 0 SKIPPED | PASS — 4 PASSED |
+| 3. No Windows paths in checksum JSON | PASS |
+| 4. `verify_label_alignment.py` runs clean | PASS |
+| 5. No `isinstance(result, tuple)` in script | PASS |
+| 6. No "5 epoch" in `measure_runtime.py` | PASS |
+
+All 32 tests passing throughout. Branch: `fix/copilot-post-audit`.

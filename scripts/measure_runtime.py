@@ -1,6 +1,6 @@
 """T1.9 — Computational cost reporting.
 
-Measures training time (on toy data, 5 epochs), peak memory, and inference
+Measures training time (on toy data, 10 epochs), peak memory, and inference
 latency for all model families.  Results are written to:
 
     results/metrics/runtime_summary.csv
