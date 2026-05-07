@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.evaluation import compute_fold_summary, compute_metrics
 from src.models import EarlyFusionMLP, IntermediateFusionModel, MultiOmicsDataset
 from src.preprocessing import concatenate_modalities, load_cv_folds, prepare_fold_data
-from src.utils import get_device, load_config, log_experiment, set_seeds
+from src.utils import compute_class_weights, dataframes_to_numpy, get_device, load_config, log_experiment, set_seeds
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,17 +62,6 @@ def to_device(x, device):
     if isinstance(x, dict):
         return {k: v.to(device) for k, v in x.items()}
     return x.to(device)
-
-
-def compute_class_weights(y_train, device):
-    classes, counts = np.unique(y_train, return_counts=True)
-    weights = 1.0 / counts.astype(np.float64)
-    weights = weights / weights.sum() * len(classes)
-    return torch.tensor(weights, dtype=torch.float32, device=device)
-
-
-def dataframes_to_numpy(data_dict):
-    return {name: df.values.astype(np.float32) for name, df in data_dict.items()}
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, max_norm=1.0):

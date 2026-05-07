@@ -208,6 +208,8 @@ Python 3.11 · PyTorch 2.7 (CUDA 11.8) · scikit-learn · XGBoost · SHAP · Cap
 
 **Dineth Hettiarachchi** — BSc Computer Science Final Year Project
 
+*Supervised by:* [Supervisor name — University of Westminster, Department of Computer Science]
+
 ---
 
 *Academic research prototype. Not for clinical use.*
