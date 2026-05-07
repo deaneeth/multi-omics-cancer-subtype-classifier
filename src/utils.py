@@ -29,15 +29,26 @@ logger = logging.getLogger(__name__)
 # 1. set_seeds — Full reproducibility across all libraries
 # ---------------------------------------------------------------------------
 def set_seeds(seed: int = 42) -> None:
-    """Set random seeds for full reproducibility.
+    """Set random seeds for reproducibility.
 
     CRITICAL: Call this as the FIRST line after imports in every script/notebook.
-    Sets PYTHONHASHSEED, random, numpy, torch (CPU + CUDA), and cuDNN flags.
+    Stabilises: stdlib random, numpy, torch CPU, torch CUDA, cuDNN determinism.
+
+    NOTE on PYTHONHASHSEED:
+        ``os.environ['PYTHONHASHSEED'] = str(seed)`` is set here so that any
+        child processes spawned after this call inherit the hash seed. It has
+        NO effect on hash randomisation in the CURRENT Python process — the
+        interpreter's hash seed is fixed at startup and cannot be changed
+        mid-run. To fully stabilise hash order in the current process, launch
+        the script with PYTHONHASHSEED set in the shell environment:
+            PYTHONHASHSEED=42 python scripts/train_fusion.py
+        In practice, Python 3.7+ guarantees dict insertion order so hash-order
+        drift is unlikely to affect results, but the env-launch form is correct.
 
     Args:
         seed: Random seed value. Default 42 per project convention.
     """
-    # Python hash seed — must be set before any hashing occurs
+    # Set for child processes (has no effect on this process's hash seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     # Python stdlib
@@ -203,3 +214,29 @@ def compute_class_weights(y_train: np.ndarray, device: "torch.device") -> "torch
 def dataframes_to_numpy(data_dict: dict) -> dict:
     """Convert {modality: DataFrame} to {modality: np.ndarray float32}."""
     return {name: df.values.astype(np.float32) for name, df in data_dict.items()}
+
+
+def compute_kegg_coverage(pathway_mapping_path: str, cancer: str) -> dict:
+    """Return KEGG pathway coverage stats for one cancer type.
+
+    Reads the pre-computed `coverage_pct`, `n_mapped_features`, and
+    `n_features` directly from the JSON artifact instead of recomputing,
+    so the returned value always matches what the model actually used.
+
+    Args:
+        pathway_mapping_path: Path to pathway_gene_mapping.json.
+        cancer: Cancer key in the JSON, e.g. 'BRCA' or 'COAD'.
+
+    Returns:
+        dict with keys: coverage_pct, n_mapped, n_total, n_pathways.
+    """
+    import json
+    with open(pathway_mapping_path) as f:
+        mapping = json.load(f)
+    d = mapping[cancer.upper()]
+    return {
+        "coverage_pct": d["coverage_pct"],
+        "n_mapped": d["n_mapped_features"],
+        "n_total": d["n_features"],
+        "n_pathways": d["n_pathways_with_hits"],
+    }

@@ -1,0 +1,6 @@
+{
+  "GS-BRCA_toy": {
+    "path": "data/toy/BRCA_label_num_toy.csv",
+    "sha256": "e067ac7827a7c9071191846777cdc44962e640e20acb0df83556ef8ca78ef182"
+  }
+}

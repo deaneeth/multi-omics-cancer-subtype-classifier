@@ -2012,10 +2012,13 @@ def main():
             help="GS-BRCA: Breast cancer, 5 molecular subtypes. "
             "GS-COAD: Colon adenocarcinoma, 4 CMS subtypes.",
         )
-        if cancer_type == "GS-BRCA":
-            st.caption("671 samples · 5 subtypes · 15,366 features")
-        else:
-            st.caption("260 samples · 4 subtypes · 15,200 features")
+        _sidebar_cfg = load_config_json(cancer_type)
+        _sidebar_total = sum(_sidebar_cfg.get("modality_dims", {}).values()) or (
+            15366 if cancer_type == "GS-BRCA" else 15200
+        )
+        _sidebar_n_sub = _sidebar_cfg.get("n_classes") or len(_sidebar_cfg.get("class_names", {}))
+        _sidebar_n_samples = 671 if cancer_type == "GS-BRCA" else 260
+        st.caption(f"{_sidebar_n_samples} samples · {_sidebar_n_sub} subtypes · {_sidebar_total:,} features")
 
         st.markdown("---")
 
@@ -2033,11 +2036,7 @@ def main():
 
         st.markdown("---")
 
-        _about_cancer = (
-            "GS-BRCA (5 subtypes) · 15,366 features"
-            if cancer_type == "GS-BRCA"
-            else "GS-COAD (4 subtypes) · 15,200 features"
-        )
+        _about_cancer = f"{cancer_type} ({_sidebar_n_sub} subtypes) · {_sidebar_total:,} features"
         st.markdown(
             '<details class="custom-details"><summary>{chev} About this project</summary>'
             '<div class="details-body">'
@@ -2192,7 +2191,7 @@ def main():
 """,
                     unsafe_allow_html=True,
                 )
-                _mirna_count = cfg["modality_dims"].get("mirna", 366)
+                _mirna_count = cfg["modality_dims"].get("mirna", cfg["modality_dims"].get("miRNA", 0))
                 _n_subtypes = cfg.get("n_classes") or len(cfg.get("class_names", {}))
                 _total_feats = cfg.get(
                     "total_features", sum(cfg["modality_dims"].values())
@@ -2932,6 +2931,49 @@ def main():
                         "Select a specific cancer type above to compare the other."
                     )
                 st.plotly_chart(fig_radar, use_container_width=True)
+
+        # --- Calibration Analysis ---
+        section_divider()
+        st.markdown("#### Calibration Analysis")
+        st.caption(
+            "Expected Calibration Error (ECE) measures confidence-accuracy alignment "
+            "(lower is better). Reliability diagrams show average accuracy per confidence bin."
+        )
+        _calib_csv = os.path.join(RESULTS_DIR, "calibration", "calibration_summary.csv")
+        if os.path.exists(_calib_csv):
+            _calib_df = pd.read_csv(_calib_csv)
+            _calib_cancer = selected_cancer if (comp_df is not None and selected_cancer != "All") else cancer_type
+            _calib_view = _calib_df[_calib_df["cancer"] == _calib_cancer] if _calib_cancer in _calib_df["cancer"].values else _calib_df
+            _calib_summary = (
+                _calib_view.groupby("model")[["ece", "mce", "brier"]]
+                .agg(["mean", "std"])
+                .round(4)
+            )
+            _calib_summary.columns = ["ECE mean", "ECE std", "MCE mean", "MCE std", "Brier mean", "Brier std"]
+            st.dataframe(_calib_summary, use_container_width=True)
+
+            # Show reliability diagram for the selected cancer
+            _calib_cancer_short = "brca" if "BRCA" in _calib_cancer else "coad"
+            _model_prefix_map = {
+                "XGBoost": "xgb", "RandomForest": "rf",
+                "IntermediateFusion": "fusion", "PathwayAwareFusion": "pathway_fusion",
+            }
+            _calib_cols = st.columns(2)
+            _col_idx = 0
+            for _model_label, _prefix in _model_prefix_map.items():
+                _img_path = os.path.join(
+                    RESULTS_DIR, "calibration",
+                    f"reliability_{_prefix}_{_calib_cancer_short}.png"
+                )
+                if os.path.exists(_img_path):
+                    with _calib_cols[_col_idx % 2]:
+                        st.image(_img_path, caption=_model_label, use_container_width=True)
+                    _col_idx += 1
+        else:
+            st.info(
+                "Calibration plots not yet generated. "
+                "Run `python scripts/calibration_analysis.py` to produce them."
+            )
 
         # =============================================================
         # LATENT SPACE VISUALIZATION

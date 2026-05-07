@@ -1,0 +1,13 @@
+cancer,model_a,model_b,mean_diff,ci_low,ci_high,wilcoxon_p,cohens_d,n_folds
+GS-BRCA,IntermediateFusion,PathwayFusion,0.0076,-0.006,0.0212,0.625,0.431,5
+GS-BRCA,IntermediateFusion,RandomForest,0.2059,0.1234,0.2867,0.0625,1.888,5
+GS-BRCA,IntermediateFusion,XGBoost,0.0143,-0.0493,0.0607,0.625,0.197,5
+GS-BRCA,PathwayFusion,RandomForest,0.1983,0.1139,0.2807,0.0625,1.71,5
+GS-BRCA,PathwayFusion,XGBoost,0.0067,-0.0655,0.064,0.625,0.083,5
+GS-BRCA,RandomForest,XGBoost,-0.1916,-0.2325,-0.1434,0.0625,-3.34,5
+GS-COAD,IntermediateFusion,PathwayFusion,-0.0685,-0.1877,0.0122,0.3125,-0.504,5
+GS-COAD,IntermediateFusion,RandomForest,0.0607,0.0128,0.132,0.0625,0.756,5
+GS-COAD,IntermediateFusion,XGBoost,0.0333,-0.043,0.1191,0.625,0.324,5
+GS-COAD,PathwayFusion,RandomForest,0.1293,0.02,0.2469,0.125,0.895,5
+GS-COAD,PathwayFusion,XGBoost,0.1018,-0.0181,0.2217,0.3125,0.664,5
+GS-COAD,RandomForest,XGBoost,-0.0275,-0.0624,0.0192,0.4375,-0.506,5
