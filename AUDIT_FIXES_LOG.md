@@ -331,8 +331,10 @@ instead of asserting — the T1.3 alignment guard was inert on POSIX systems.
 **Fix:**
 - `scripts/verify_label_alignment.py`: added `pathlib` import; write path as
   `Path(label_path).as_posix()` when building the checksum record dict.
-- `tests/test_label_alignment.py`: resolve path via `Path(record["path"])` so both
-  `/` and `\` are handled cross-platform; use `label_path.exists()`.
+- `tests/test_label_alignment.py`: normalize any backslashes before `Path()` via
+  `record["path"].replace("\\", "/")` — `Path()` on POSIX treats `\` as a literal
+  character, not a separator, so normalization is required as a defensive guard;
+  use `label_path.exists()`.
 - `data/label_file_checksums.json`: regenerated — backslash entry replaced with
   forward-slash path.
 

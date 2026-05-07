@@ -72,7 +72,7 @@ def test_label_file_checksum_matches_recorded() -> None:
         pytest.skip(f"No checksum record for {key}; run scripts/verify_label_alignment.py --toy")
 
     record = checksums[key]
-    label_path = Path(record["path"])   # handles both / and \ on any OS
+    label_path = Path(record["path"].replace("\\", "/"))  # normalize Windows separators before Path()
     if not label_path.exists():
         pytest.skip(f"Label file not found at recorded path {label_path}")
 
