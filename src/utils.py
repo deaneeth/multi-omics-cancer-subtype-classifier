@@ -29,15 +29,26 @@ logger = logging.getLogger(__name__)
 # 1. set_seeds — Full reproducibility across all libraries
 # ---------------------------------------------------------------------------
 def set_seeds(seed: int = 42) -> None:
-    """Set random seeds for full reproducibility.
+    """Set random seeds for reproducibility.
 
     CRITICAL: Call this as the FIRST line after imports in every script/notebook.
-    Sets PYTHONHASHSEED, random, numpy, torch (CPU + CUDA), and cuDNN flags.
+    Stabilises: stdlib random, numpy, torch CPU, torch CUDA, cuDNN determinism.
+
+    NOTE on PYTHONHASHSEED:
+        ``os.environ['PYTHONHASHSEED'] = str(seed)`` is set here so that any
+        child processes spawned after this call inherit the hash seed. It has
+        NO effect on hash randomisation in the CURRENT Python process — the
+        interpreter's hash seed is fixed at startup and cannot be changed
+        mid-run. To fully stabilise hash order in the current process, launch
+        the script with PYTHONHASHSEED set in the shell environment:
+            PYTHONHASHSEED=42 python scripts/train_fusion.py
+        In practice, Python 3.7+ guarantees dict insertion order so hash-order
+        drift is unlikely to affect results, but the env-launch form is correct.
 
     Args:
         seed: Random seed value. Default 42 per project convention.
     """
-    # Python hash seed — must be set before any hashing occurs
+    # Set for child processes (has no effect on this process's hash seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     # Python stdlib

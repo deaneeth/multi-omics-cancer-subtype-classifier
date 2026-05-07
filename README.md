@@ -66,6 +66,13 @@ data/raw/GS-COAD/Top/  (same pattern)
 
 ### 3. Run the full pipeline
 
+> **Reproducibility note:** For full hash-order determinism, prefix all training
+> commands with `PYTHONHASHSEED=42` (Linux/macOS) or `$env:PYTHONHASHSEED=42;` (Windows PowerShell).
+> The code calls `set_seeds(42)` internally for numpy/torch, but Python's hash seed
+> must be set in the environment *before* the interpreter starts. In practice,
+> Python 3.7+ guarantees dict insertion order, so omitting this only risks log
+> output reordering rather than result differences.
+
 ```bash
 # Preprocess and verify (writes data/preprocessed/)
 jupyter nbconvert --to notebook --execute notebooks/01_preprocessing.ipynb
