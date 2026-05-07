@@ -1,158 +1,492 @@
 # The Story of MLOmics
 
-## What Problem Were We Trying to Solve?
+*A complete guide to this project, written for anyone — no scientific background needed.*
 
-Cancer is not one disease — it's hundreds. Even within a single cancer type like breast cancer, there are distinct *subtypes* that behave differently and respond differently to treatment. Getting the subtype right matters: the wrong treatment plan can be ineffective or even harmful.
+---
 
-Doctors today use genetic tests to figure out which subtype a patient has. These tests generate enormous amounts of biological data — measurements from thousands of genes, proteins, and chemical markers all at once. Reading all of this data manually is impossible. That's where machine learning comes in.
+## The Problem: Why Cancer Subtypes Matter
 
-This project — **MLOmics** — is a final-year BSc research project that asks a simple question:
+Imagine two women walk into a doctor's office. Both have breast cancer. The same disease, right? Wrong.
 
-> *Can a computer learn to classify cancer subtypes by reading a patient's biology — and can we explain* why *it made its decision?*
+Inside their tumours, the biology is completely different. One woman's cancer is fuelled by the hormone estrogen. The other's is driven by a protein called HER2. If you give the first woman's treatment to the second, it won't work — it might even make things worse. If you give chemotherapy to someone who only needs hormone therapy, you're poisoning them for no benefit.
+
+This is why doctors don't just say "you have breast cancer." They say "you have **Luminal A** breast cancer" or "you have **HER2-enriched** breast cancer." These labels are called **molecular subtypes**, and getting them right determines whether a patient lives or dies.
+
+Today, doctors figure out the subtype by running a few protein tests (called IHC — immunohistochemistry) on a tumour sample. But these tests get it wrong about 10-15% of the time. When they're wrong, patients get the wrong treatment.
+
+There's a better way. Instead of testing a few proteins, what if we could read the tumour's **entire biological instruction manual** — thousands of measurements from genes, chemical markers, and structural variations all at once — and use a computer to figure out the subtype?
+
+That's what MLOmics does.
 
 ---
 
 ## The Data: Four Windows Into a Cell
 
-Every tumour sample in this project was described through **four types of biological measurements**, each telling a different part of the story:
+Every tumour sample in this project is described through **four completely different types of biological measurements**. Think of each one as a different camera looking at the same cell:
 
-| Measurement | What it captures |
-|---|---|
-| **mRNA expression** | Which genes are currently "switched on" |
-| **miRNA expression** | Small molecules that regulate gene activity |
-| **DNA methylation** | Chemical tags that silence genes |
-| **CNV (Copy Number Variation)** | How many copies of each gene a cell carries |
+### 1. mRNA Expression — "Which genes are switched on?"
+Your DNA is like a recipe book. mRNA is like photocopies of specific recipes that the cell is currently cooking. By measuring mRNA, we can see which genes are active right now. We measured **5,000** of the most important genes.
 
-Think of it like looking at a person through four different cameras — each reveals something the others don't. We deliberately chose to use all four rather than just mRNA (the most common choice) because we wanted to test whether the combination is genuinely stronger than any single view.
+### 2. miRNA Expression — "Who's regulating the kitchen?"
+miRNA are tiny molecules that control gene activity — like a manager who tells cooks to speed up or slow down. They don't make proteins themselves; they regulate the ones that do. We measured **200-366** miRNAs (exactly 366 for breast cancer, 200 for colon cancer).
 
-We worked with data from **931 patients** across two cancers:
-- **Breast cancer (GS-BRCA)** — 671 patients, 5 subtypes
-- **Colon cancer (GS-COAD)** — 260 patients, 4 subtypes
+### 3. DNA Methylation — "Which recipes are locked away?"
+Methylation is a chemical tag that silences genes. Imagine certain pages of the recipe book are glued shut — the recipe is there, but it can't be read. We measured **5,000** methylation sites across the genome.
 
-Each patient had ~15,200 measurements across all four modalities. The data came from the publicly available [MLOmics benchmark dataset](https://figshare.com/articles/dataset/MLOmics_Cancer_Multi-Omics_Database_for_Machine_Learning/28729127).
+### 4. CNV (Copy Number Variation) — "How many copies of each recipe?"
+Sometimes cells have extra copies of certain genes (amplification) or missing copies (deletion). Too many copies of a growth gene can drive cancer. We measured **5,000** gene-level copy number variations.
 
-> **An uncomfortable early discovery:** The benchmark dataset had already pre-selected the top features using a statistical test (ANOVA) run across the *entire* dataset before we split patients into train and test groups. That means some label information leaked into the feature set before any model ever trained. We only caught this when a "sanity check" test (shuffle the labels randomly, train, see if the model still predicts well) gave an F1 of 0.38 on BRCA and 0.53 on COAD when random chance should have given 0.20 and 0.25. A properly random model shouldn't know anything — but ours did, because the features were already selected with label knowledge. We documented this honestly as a dataset-level limitation rather than a bug we could fix: the feature selection happened upstream, not in our pipeline.
+**In total, each patient's tumour is described by about 15,200 numbers** — like a 15,200-point fingerprint of their cancer's biology.
+
+### Where This Data Came From
+
+All the data comes from real patients — 931 of them — whose tumours were sequenced by The Cancer Genome Atlas (TCGA), a massive US government project. The data was organized and shared by the MLOmics benchmark dataset (CC-BY-4.0 license, meaning it's free to use for research).
+
+We worked with two cancers:
+
+**Breast Cancer (GS-BRCA) — 671 patients, 5 subtypes:**
+
+| Subtype | Patients | What it means |
+|---|---|---|
+| Basal-like | 353 (52.6%) | Aggressive, often triple-negative. Needs chemotherapy. |
+| HER2-enriched | 42 (6.3%) | Driven by HER2 protein. Responds to targeted therapy (Herceptin). |
+| Luminal A | 132 (19.7%) | Hormone-driven, slower growing. Often treated with tamoxifen alone. |
+| Luminal B | 31 (4.6%) | Also hormone-driven but faster growing. Needs hormone therapy + chemo. |
+| Normal-like | 113 (16.8%) | Resembles healthy breast tissue. Generally good prognosis. |
+
+**Colon Cancer (GS-COAD) — 260 patients, 4 subtypes:**
+
+| Subtype | Patients | What it means |
+|---|---|---|
+| CMS1 (MSI/Immune) | 174 (66.9%) | High mutation rate, strong immune response. Responds to immunotherapy. |
+| CMS2 (Canonical) | 48 (18.5%) | Classic colon cancer biology. Chromosomal instability. |
+| CMS3 (Metabolic) | 34 (13.1%) | Metabolic dysregulation. Mixed features. |
+| CMS4 (Mesenchymal) | 4 (1.5%) | Worst prognosis. Only 4 patients in the entire dataset. |
+
+Notice that last subtype — CMS4 Mesenchymal — has only **4 patients total** across 260. That's less than 2%. This becomes a big problem later.
+
+### A Problem We Discovered Early
+
+Before we even started building models, we found something uncomfortable about the data.
+
+The benchmark dataset had already been "pre-filtered." Someone ran a statistical test called ANOVA across ALL 931 patients before splitting them into training and testing groups. This test picked the 5,000 most "interesting" genes — but it used information about which patients had which subtypes to do so.
+
+This means the feature set itself was contaminated with label information. It's like being given a multiple-choice exam where the answers are partially visible through the paper.
+
+We proved this with a sanity check: we randomly shuffled all the subtype labels (so the model should learn nothing), then trained XGBoost. A properly random model with 5 classes should score about F1=0.20 (basically guessing). Instead, it scored **0.38 on BRCA and 0.53 on COAD**. The model was finding patterns because the features themselves contained leaked label information from the ANOVA pre-selection.
+
+This was **not our bug** — the feature selection happened upstream, before any of our code ran. We documented it honestly as a dataset-level limitation. It means all the F1 scores in this project are slightly inflated compared to what you'd get with truly independent feature selection. But since this affects all models equally, the comparisons between models are still fair.
 
 ---
 
-## The Journey: Building Smarter and Smarter Models
+## Step 1: Getting the Data Ready
 
-### Step 1 — Get the Data Ready
+Raw biological data is a mess. Here's what we had to deal with:
 
-Raw biological data is messy. Values are missing, scales are wildly different between modalities, and sample IDs need to be matched across all four measurement types.
+**Missing values.** The breast cancer miRNA data had a shocking problem: 166 out of 366 miRNA columns were **completely empty** — every single patient had "NaN" (Not a Number) for those measurements. That's 45.4% of the miRNA data just... gone. The probes simply weren't assayed in the BRCA cohort. We filled these with zero after normalizing (adding zero signal — it won't help, but it won't hurt either).
 
-We built a preprocessing pipeline that cleaned everything up: normalising each modality independently, imputing missing values, and splitting patients into **5 equal groups** for fair testing (so no model ever trains and tests on the same patient). We ran 49 automated checks on this pipeline — 46 passed. The three that failed are documented above and in the preprocessing report.
+**Different scales.** mRNA values might range from 0 to 50,000, while methylation values range from 0 to 1. If you feed these directly to a model, the mRNA will dominate simply because its numbers are bigger — not because it's more important. We normalized each modality separately (z-score normalization: subtract the mean, divide by the standard deviation) so every measurement type has equal weight.
 
-> **Another surprise during data checks:** Almost half the miRNA measurements for breast cancer patients — 166 out of 366 columns — were entirely empty (all NaN). The assay probes simply weren't observed in this cohort. We filled them with zero after normalising, but it means miRNA contributed far less information for breast cancer than we initially expected.
+**Patient-level splitting.** This is critical and non-negotiable. When we test a model, we must never test it on a patient it trained on. That would be cheating — like studying from the answer key. We split our 931 patients into **5 groups** (called "folds"). For each fold, we train on 4 groups (~80% of patients) and test on the held-out group (~20%). We rotate through all 5 folds so every patient gets tested exactly once.
 
-> **A real constraint we had to work around:** The colon cancer dataset only has 260 patients across 4 subtypes. One subtype (CMS4) has just **4 patients total** in the entire dataset. That's not enough to learn from. In some test folds it appears zero times in the validation set, making standard accuracy metrics undefined (NaN) for that fold. We kept it in rather than dropping it — dropping rare subtypes in a medical context feels like cheating — but it means colon cancer results are noisier and less reliable than breast cancer results throughout the project.
+We saved these fold assignments to a file called `cv_folds.json` and **never changed them**. Every single model — XGBoost, Random Forest, neural networks, pathway fusion — uses the exact same splits. This means every comparison between models is fair: they all saw the same patients in training and were tested on the same patients.
 
-### Step 2 — Start Simple: Tree-Based Baselines
+**The normalization rule.** The scaler that normalizes the data must be "fitted" (it learns the mean and standard deviation) on the training fold **only**. Then we apply it to both training and testing data. If we fit the scaler on all data at once, information from the test set leaks into training through the normalization parameters.
 
-Before doing anything fancy, we mashed all four modalities into one big list of numbers and handed it to two well-known algorithms:
+**49 automated checks.** We ran a comprehensive verification suite on our preprocessing pipeline. 46 checks passed. The 3 that failed are the ones documented above (label shuffle for BRCA and COAD, and all-NaN miRNA columns). All the important safety checks passed: zero overlap between training and testing patients, all patients accounted for, class balance maintained across folds.
 
-- **XGBoost** — a powerful gradient-boosted decision tree algorithm
-- **Random Forest** — an ensemble of many decision trees
+---
 
-We did this first because it's important to establish a floor — if a simple well-known method already works well, the more complex models need to actually beat it to justify their complexity.
+## Step 2: Starting Simple — The Tree-Based Baselines
 
-Results on breast cancer: XGBoost hit an **F1 score of 0.794**. Not bad — but we thought the deep learning approach could do better.
+Before doing anything fancy, we started with the most straightforward approach imaginable: take all 15,200 measurements, mash them into one giant list of numbers per patient, and feed it to two well-known algorithms.
 
-> **Something that genuinely puzzled us:** Random Forest achieved an AUC of 0.971 — the *highest* of any model in the entire project. AUC measures how well a model can *rank* patients by confidence. But its F1 was only 0.602, one of the worst. This means Random Forest had excellent intuition about which cases were uncertain, but when forced to make a hard decision it missed a lot of patients (recall of 0.560 — it only found 56% of positives). High AUC with low recall is a real failure mode and a good reminder that AUC alone can be misleading.
+This is called **early fusion** — we fuse all the data together at the very beginning, before any analysis.
 
-### Step 3 — The Core Idea: Intermediate Fusion
+### XGBoost
 
-Here's the central hypothesis of the whole project. When you just mash all the data together (early fusion), you lose information about *where* each signal came from. mRNA is not the same as DNA methylation — they tell different stories, at different scales, measured by different instruments.
+XGBoost is a gradient-boosted decision tree algorithm. It works like a very smart game of 20 Questions: it asks "is gene X above this threshold?" then "is methylation site Y below that threshold?" and so on, building a decision tree. Then it builds another tree that focuses on the cases the first tree got wrong. Then another. And another — **300 trees in total**, each correcting the mistakes of the previous ones.
 
-What if instead we built a **separate mini-network for each modality**, let each one learn its own compact summary, and *then* combined those summaries to make the final classification?
+Hyperparameters: 300 trees, max depth of 6 questions per tree, learning rate of 0.1 (how aggressively each tree corrects previous errors).
 
-This is called **intermediate fusion**, and it's the heart of MLOmics.
+**Results on breast cancer (BRCA):**
+- **F1 score: 0.794** — the model correctly identifies about 79% of cases, balanced across all subtypes
+- **AUC: 0.970** — outstanding ranking ability (scale: 0.5 = random guessing, 1.0 = perfect)
+- **Accuracy: 0.864** — 86.4% of predictions are correct
+
+**Results on colon cancer (COAD):**
+- **F1 score: 0.636**
+- **AUC: 0.911**
+- **Accuracy: 0.881**
+
+### Random Forest
+
+Random Forest is a simpler ensemble: 300 independent decision trees, each trained on a random subset of the data and a random subset of features. They vote on the final answer. It's like asking 300 doctors who each looked at a different part of the patient's chart and taking a majority vote.
+
+Hyperparameters: 300 trees, unlimited depth, class_weight='balanced' (the algorithm knows some subtypes are rare and adjusts accordingly).
+
+**BRCA: F1=0.602, AUC=0.971, Accuracy=0.782**
+**COAD: F1=0.608, AUC=0.932, Accuracy=0.873**
+
+### The AUC Paradox
+
+Look at those BRCA numbers again. Random Forest has the **highest** AUC of any model in the entire project (0.971), meaning it's the best at *ranking* patients by how confident it is. But it has the **worst** F1 (0.602), meaning when forced to make a hard yes/no decision about each subtype, it's wrong a lot.
+
+How can a model be simultaneously the best and worst? Because AUC and F1 measure different things:
+
+- **AUC (Area Under the ROC Curve):** Measures how well the model separates different classes. Think of it as the model's "intuition." A model with AUC=0.971 is very good at saying "I'm 90% sure this is Luminal A, but only 30% sure about this other patient."
+
+- **F1 score:** Measures how correct the model is when forced to pick exactly one answer. This is the "hard decision" metric.
+
+Random Forest had great intuition (it knew which cases were uncertain) but poor decision-making at the threshold (recall was only 0.560 — it found only 56% of the positive cases). This is like a doctor who accurately assesses how sick each patient is, but when forced to discharge or admit, makes the wrong call for many patients. This observation is a valuable finding for the thesis discussion.
+
+---
+
+## Step 3: The Core Idea — Intermediate Fusion
+
+Here's the central hypothesis. When you mash all the data together at the start (early fusion), you lose information about *where* each signal came from. mRNA is not the same as DNA methylation — they tell different stories, are measured by different instruments, and operate at different biological scales. A 5,000-dimensional mRNA vector shouldn't be treated the same as a 200-dimensional miRNA vector.
+
+What if, instead of one big bucket, we built a **separate neural network for each measurement type**, let each one compress its thousands of numbers into a compact 64-number summary, and *then* combined those summaries to make the final decision?
+
+This is called **intermediate fusion**:
 
 ```
-mRNA data    → [Encoder A] → 64-dim summary ──┐
-miRNA data   → [Encoder B] → 64-dim summary ──┤
-Methylation  → [Encoder C] → 64-dim summary ──┼→ [Classifier] → Subtype
-CNV data     → [Encoder D] → 64-dim summary ──┘
+mRNA data   (5,000 numbers) → [mRNA Encoder]    → 64-number summary ──┐
+miRNA data  (200 numbers)   → [miRNA Encoder]   → 64-number summary ──┤
+Methylation (5,000 numbers) → [Methy Encoder]   → 64-number summary ──┼→ [Classifier] → Subtype
+CNV data    (5,000 numbers) → [CNV Encoder]     → 64-number summary ──┘
 ```
 
-Each encoder compresses thousands of measurements into just 64 numbers that capture the most important patterns. Then a final network combines all four summaries and predicts the subtype.
+**How each encoder works:**
+1. Takes in thousands of measurements
+2. Passes through two layers of neurons (5,000 → 256 → 64)
+3. Each layer normalizes its output (BatchNorm), keeps only positive signals (ReLU), and randomly drops 30% of connections during training (Dropout) to prevent memorization
+4. Produces a compact 64-number "summary" that captures the most important patterns
 
-The risk here was real: deep learning needs a lot of data, especially when you're training four separate networks. With only 260 COAD patients, we were pushing into territory where a neural network can easily overfit (memorise the training data instead of learning real patterns). We used early stopping, weight decay, and class-weighted loss to fight this — but it was a genuine gamble.
+**The classifier** takes the four 64-number summaries (256 numbers total), passes them through a final decision network (256 → 128 → number of subtypes), and outputs the predicted subtype.
 
-Result on breast cancer: **F1 of 0.808** — beating XGBoost. Hypothesis confirmed.
+**Training details:**
+- 100 maximum epochs (full passes through the training data), with early stopping after 10 epochs of no improvement
+- Batch size of 32 (process 32 patients at a time)
+- Learning rate starts at 0.001 and reduces by half when progress stalls
+- Weight decay of 0.0001 (a gentle penalty for complexity to prevent overfitting)
+- Class-weighted loss function (rare subtypes are weighted more heavily so the model pays attention to them)
 
-> **But on colon cancer, the hypothesis failed.** IntermediateFusion scored F1=0.669, while a simple EarlyFusionMLP (just flatten everything and use one neural network) scored 0.751. The fancy architecture lost to the simpler one. With only 260 patients, there simply wasn't enough data to train four separate encoders well. The modality-specific representations didn't have enough signal to justify the extra complexity.
+**Results on BRCA:**
+- **F1: 0.808** — beat XGBoost! The hypothesis was confirmed: modality-specific encoders work better than just mashing everything together.
+- **Accuracy: 0.833** — 83.3% correct
+- **AUC: 0.963**
 
-### Step 4 — Adding Biology: Pathway-Aware Fusion
+**But on COAD, the hypothesis failed.**
 
-After the COAD disappointment, we took a different angle. Deep learning with limited data is hard — but biologists have spent decades mapping which genes work together in the same biological "pathways." What if we gave the model that structure as a starting point instead of making it discover everything from scratch?
+IntermediateFusion scored **F1=0.669** on colon cancer. But when we tested an even simpler approach — just one neural network on the concatenated data (we called this EarlyFusionMLP: input→256→128→subtypes) — it scored **0.751**. The simpler model beat the fancy one.
 
-We replaced the mRNA encoder with a smarter version that **groups genes by their known KEGG biological pathways**, calculates a summary for each pathway, and then uses a learnable attention mechanism to figure out which pathways matter most for classification.
+**Why?** Colon cancer has only 260 patients across 4 subtypes. IntermediateFusion has four separate encoders, each with its own parameters to learn. With so little data, there simply aren't enough examples for each encoder to learn meaningful patterns. The model gets confused. The simpler EarlyFusionMLP, with fewer parameters, doesn't suffer from this — it can't overthink because it can't think that deeply in the first place.
 
-The biological prior gave the model a head start. On **colon cancer**, this was the biggest improvement of the project: F1 jumped from 0.669 to **0.738** — not just beating our own intermediate fusion baseline, but also beating the simple EarlyFusionMLP. This validated the approach: when data is scarce, baked-in biological knowledge compensates for what the model can't learn from examples alone.
-
-### Step 5 — Understanding the Decisions
-
-A model that makes predictions without explanation isn't trustworthy in medicine. We added three explanation methods:
-
-- **SHAP** (for XGBoost) — shows which specific genes pushed the prediction up or down
-- **Integrated Gradients** (for deep models) — traces which input features the neural network found most important
-- **KEGG pathway enrichment** — maps important genes back to known biological processes
-
-This lets a researcher ask: *"Why did the model predict Subtype X?"* and get a biologically meaningful answer.
-
-> One limitation we had to be honest about: for the Pathway-Aware Fusion model in the demo app, we reuse the IntermediateFusion explanation rather than computing a separate one. The explanation is still accurate at the gene level, but it doesn't show the pathway-level attention weights the model actually used internally. A proper explanation of that model would require a different visualisation that wasn't built into the final demo.
-
-### Step 6 — Stress-Testing with Ablations
-
-We systematically broke things to see what mattered:
-
-- **Removed one modality at a time** — mRNA was the most important for breast cancer; removing it dropped F1 the most.
-- **Simulated missing data** — even with 50% of data randomly missing, performance dropped gracefully (F1 went from 0.808 to 0.749 on BRCA, not catastrophically).
-- **Compared fusion strategies** — confirmed intermediate fusion is better than early-concatenation on BRCA.
-
-> **The most surprising result in the whole project:** On colon cancer, removing miRNA entirely *improved* F1 from 0.669 to **0.802**. A modality was actively hurting the model. The most likely explanation: with very few patients, noisy or uninformative miRNA measurements added confusion the model couldn't ignore. Sometimes less data is better data.
+**Lesson:** Fancy architecture doesn't automatically beat simple baselines. The right model complexity depends on how much data you have.
 
 ---
 
-## Final Results at a Glance
+## Step 4: Adding Biology — Pathway-Aware Fusion
 
-| Model | Breast Cancer F1 | Colon Cancer F1 | Best AUC |
-|---|---|---|---|
-| XGBoost | 0.794 | 0.636 | 0.970 |
-| Random Forest | 0.602 | 0.608 | 0.971 |
-| Intermediate Fusion | **0.808** | 0.669 | 0.963 |
-| Pathway-Aware Fusion | 0.801 | **0.738** | 0.966 |
+After the colon cancer disappointment, we asked: why did IntermediateFusion fail on small data? Because it had to learn everything from scratch — which genes are related, which work together, which pathways matter. With only 260 patients, there weren't enough examples.
 
-F1 score balances precision ("when it predicts a subtype, is it right?") and recall ("does it find all the cases?"). AUC measures how confidently the model separates subtypes — all models scored above 0.90, which is strong.
+But biologists have spent **decades** mapping out which genes work together. These groups of cooperating genes are called **biological pathways**. For example, the "Cell Cycle" pathway includes all the genes that control cell division. The "p53 signaling" pathway includes genes that detect DNA damage and trigger cell death.
 
-**The honest takeaway:** Intermediate fusion wins on breast cancer, but only narrowly over XGBoost, and it lost on colon cancer. The real win was adding biological pathway structure — that gave the biggest gain exactly where data was scarce.
+The KEGG database (Kyoto Encyclopedia of Genes and Genomes) catalogs hundreds of these pathways. What if, instead of forcing the model to discover these relationships from limited data, we **told the model which genes belong to which pathways upfront**?
 
----
+This is **pathway-aware fusion**. We replaced the mRNA encoder with a smarter version that has two paths:
 
-## The Demo App
+**Path A — The pathway expert:**
+1. Group the 5,000 mRNA genes by their KEGG pathway membership (e.g., all cell cycle genes together, all p53 genes together)
+2. For each pathway, calculate the average activity of all its member genes (just one number per pathway)
+3. Pass these pathway-level summaries through a learnable **attention** mechanism — a small neural network that learns which pathways are most important for each patient and assigns weights accordingly
+4. Multiply each pathway's summary by its attention weight and project to 64 dimensions
 
-Everything came together in an interactive **Streamlit web app** where you can:
+**Path B — The unmapped gene handler:**
+Not every gene belongs to a known KEGG pathway. The remaining genes are processed through a standard dense encoder, just like before.
 
-1. **Upload a patient's multi-omics data** (a CSV file) — sample files are provided for both cancer types
-2. **Choose a cancer type** (breast or colon) and a **model** (XGBoost, Intermediate Fusion, or Pathway-Aware Fusion)
-3. **See the predicted subtype** with a confidence score and colour-coded confidence bar (green = high, blue = moderate, amber = low confidence)
-4. **See an explanation** — which genes/features drove the prediction, shown as a bar chart with modality labels
-5. **Compare all models** side-by-side with F1, precision, recall, AUC, ROC curves, and a radar chart
+**The merger:** Path A's pathway-aware output and Path B's unmapped gene output are concatenated and projected down to a single 64-dimensional vector — the same size as the other modalities' encoders — so everything fits together cleanly.
 
-The app loads pre-trained models from saved checkpoints. All heavy computation (training, explanations, t-SNE visualisations) was done beforehand and stored — so the demo runs fast without a GPU.
+**Results on COAD:**
+- **F1: 0.738** — a massive jump from 0.669! The biological prior compensated for data scarcity.
+- **Accuracy: 0.854**
+- **AUC: 0.954** (best of any model on COAD)
 
----
+**Results on BRCA:**
+- **F1: 0.801** — slightly below IntermediateFusion's 0.808, but the difference (−0.0076) is within statistical noise
+- **Accuracy: 0.829**
 
-## What This Project Demonstrates
+**An honest caveat about the attention mechanism:** The attention weights came out nearly uniform — every pathway got roughly the same weight (~0.003–0.004, with tiny variation between pathways). The model didn't strongly focus on any particular pathway. The top-10 most-attended pathways were surprising: Axon guidance, Graft-versus-host disease, IL-17 signaling, Cocaine addiction. Classical cancer pathways (Cell cycle, PI3K-Akt, p53) were nowhere near the top. Whether this reflects genuinely weak biological signal, insufficient KEGG coverage of our Top-5000 gene set, or training instability is an open question.
 
-1. **Multi-omics data is richer than single-omics** — using all four measurement types together outperforms any single one
-2. **How you combine data matters — but only at scale** — intermediate fusion (modality-specific encoders) outperforms raw concatenation on the larger breast cancer dataset, but not on the smaller colon cancer one
-3. **Biological knowledge helps small datasets** — KEGG pathway structure gave the biggest gains exactly where data was scarce
-4. **Explainability is achievable but has limits** — we can trace predictions back to genes, but internal model representations (like pathway attention weights) are harder to surface cleanly
-5. **Always run sanity checks** — our label shuffle test caught a real methodological issue in the benchmark dataset early, and documenting it honestly is more valuable than pretending it didn't happen
-6. **Surprising negatives matter** — finding that miRNA hurts colon cancer performance is a genuine scientific contribution, not a failure
+**The win was real, even if the mechanism isn't fully understood.** PathwayFusion scored +0.069 F1 higher on COAD than IntermediateFusion — the biggest gain in the entire project — exactly where data was scarcest.
 
 ---
 
-*Built by Dineth Hettiarachchi as a BSc Computer Science final-year project. Not for clinical use.*
+## Step 5: Understanding the Decisions
+
+A model that says "this patient has Subtype X" without explaining why is useless in medicine. Doctors need to know *which evidence* drove the prediction. We built three layers of explanation:
+
+### Layer 1: SHAP (for XGBoost and Random Forest)
+
+SHAP (SHapley Additive exPlanations) is a method from game theory. It asks: "if we removed this gene from the analysis, how much would the prediction change?" Genes that cause big changes when removed are important. Genes that cause no change when removed aren't contributing.
+
+**For breast cancer (XGBoost):** The top features were almost entirely mRNA genes. The top five: MLPH, ESR1 (estrogen receptor — makes sense, it's breast cancer!), MPHOSPH6, TOP2A, KCNMB1. The first non-mRNA feature (a miRNA called hsa-mir-130b) didn't appear until rank 14. XGBoost relies overwhelmingly on gene expression for BRCA.
+
+**For colon cancer (XGBoost):** A much more balanced picture. The top features came from three different modalities: CNV (MYO5B, DCC), mRNA (TIMM21, SLC35A4), and methylation (C4orf45). The model was genuinely using all the data types, not just one.
+
+### Layer 2: Integrated Gradients (for the Deep Neural Networks)
+
+For the fusion models, we used Integrated Gradients (via Captum library). This method traces how the prediction changes as we gradually "turn on" each input feature from zero to its actual value, measuring the accumulated contribution of each gene to the final decision.
+
+**A striking (and troubling) finding:** The IntermediateFusion model's top-50 most important features were **entirely miRNA** for both breast and colon cancer. Every single one. Out of 15,200+ features across all modalities, the model fixated on the 200-366 miRNA features exclusively.
+
+This immediately explained a result we'd see later in ablation testing: removing miRNA from COAD dramatically *improved* performance. The model was over-weighting a noisy signal.
+
+### Layer 3: KEGG/GO Pathway Enrichment
+
+We took the top genes identified by SHAP and Integrated Gradients and asked: what biological processes are these genes involved in? Using gseapy (a Python wrapper for the Enrichr web service), we checked against the KEGG and GO (Gene Ontology) databases.
+
+**For BRCA IntermediateFusion:**
+- **KEGG:** 4 significant pathways found. Cell cycle (extremely significant, p=0.00003 — genes: CDC20, CCNB2, PTTG1, CCNE2, TTK, CDC25B). p53 signaling pathway (p=0.013). Oocyte meiosis. HTLV-1 infection. These are biologically plausible — cell cycle and p53 are classic cancer pathways.
+- **GO Biological Process:** 57 significant terms. Top hits: microtubule cytoskeleton organization in mitosis, mitotic spindle organization, kinetochore organization. All mitosis-related — makes sense for a cancer classifier.
+
+**For XGBoost (both cancers):** Zero significant KEGG enrichment. The model found predictive genes, but they weren't organized into recognizable pathways.
+
+**For all COAD models:** Zero significant enrichment across the board. The small dataset and the miRNA artifact likely prevented the model from learning biologically coherent patterns.
+
+**Pathway validation:** We checked 9 canonical cancer pathways (PI3K-Akt, p53, MAPK, Cell cycle, Apoptosis, Wnt, Breast cancer, Colorectal cancer, Pathways in cancer). Only Cell cycle and p53 were found — and only for the fusion model on BRCA. All other combinations came up empty.
+
+---
+
+## Step 6: Stress-Testing the Models (Ablations)
+
+We systematically broke things to understand what mattered and what didn't.
+
+### Ablation A: What if we remove one modality at a time?
+
+We retrained IntermediateFusion four times, each time leaving out one data type:
+
+| Removed | BRCA F1 (baseline: 0.808) | COAD F1 (baseline: 0.669) |
+|---|---|---|
+| mRNA | 0.767 (−0.041) | 0.669 (−0.000) |
+| miRNA | 0.803 (−0.006) | **0.802 (+0.133)** |
+| Methylation | 0.788 (−0.020) | 0.732 (+0.063) |
+| CNV | 0.789 (−0.019) | 0.669 (−0.000) |
+
+**For BRCA:** mRNA is clearly the most important modality — removing it caused the biggest F1 drop. miRNA removal barely mattered (−0.006, essentially noise). Methylation and CNV were moderately important.
+
+**For COAD: The miRNA artifact.** Removing miRNA didn't hurt the model — it **helped**. F1 jumped from 0.669 all the way to 0.802. That's a +0.133 improvement. A data type was actively making the model worse.
+
+Combined with the Integrated Gradients finding (all top-50 features are miRNA), the conclusion is clear: the IntermediateFusion model over-weights the miRNA encoder for COAD. With only 260 patients and 200 miRNA features, the small miRNA module finds spurious correlations that don't generalize. The model latches onto noise instead of signal.
+
+This is the most surprising and well-evidenced finding in the project. It's not a failure — it's a genuine contribution: discovering that a specific modality can actively harm performance on small datasets.
+
+Removing methylation also improved COAD (to 0.732), suggesting it too may carry some noise, though far less than miRNA.
+
+### Ablation B: Early vs Intermediate Fusion
+
+| Model | BRCA F1 | COAD F1 |
+|---|---|---|
+| XGBoost (early, trees) | 0.794 | 0.636 |
+| EarlyFusionMLP (early, one big network) | 0.722 | **0.751** |
+| IntermediateFusion (per-modality encoders) | **0.808** | 0.669 |
+| PathwayAwareFusion (per-modality + biology) | 0.801 | **0.738** |
+
+The pattern is clear:
+- **On larger data (BRCA, 671 patients):** Modality-specific encoding wins. IntermediateFusion (0.808) > XGBoost (0.794).
+- **On smaller data (COAD, 260 patients):** Simpler approaches win. EarlyFusionMLP (0.751) > IntermediateFusion (0.669). But give it biological structure and it bounces back — PathwayFusion (0.738) nearly catches up.
+
+### Ablation C: What if some data is missing?
+
+In the real world, not every hospital runs every test. What happens if a patient is missing one or more modalities? We simulated this by randomly setting features to zero at increasing rates (10%, 20%, 30%, 50%):
+
+| Missing Rate | BRCA F1 | COAD F1 |
+|---|---|---|
+| 0% (all data) | 0.808 | 0.669 |
+| 10% | 0.819 | 0.718 |
+| 20% | 0.831 | 0.599 |
+| 30% | 0.764 | 0.611 |
+| 50% | 0.749 | 0.620 |
+
+BRCA shows reasonable degradation — even with half the data missing, F1 only drops from 0.808 to 0.749 (a 7% relative decline). COAD is chaotic — the F1 jumps around erratically (0.669 → 0.718 → 0.599 → 0.611 → 0.620), reflecting the instability of a small dataset combined with the miRNA artifact.
+
+---
+
+## The Complete Results: All Five Models Compared
+
+After 40 trained models (5 architectures × 2 cancers × 5 cross-validation folds), months of compute, and hundreds of experiment log entries, here is everything in one table:
+
+| Model | BRCA F1 | BRCA AUC | COAD F1 | COAD AUC | BRCA Acc | COAD Acc |
+|---|---|---|---|---|---|---|
+| XGBoost | 0.794 | 0.970 | 0.636 | 0.911 | 0.864 | 0.881 |
+| Random Forest | 0.602 | 0.971 | 0.608 | 0.932 | 0.782 | 0.873 |
+| EarlyFusionMLP* | 0.722 | — | 0.751 | — | — | — |
+| Intermediate Fusion | **0.808** | 0.963 | 0.669 | 0.953 | 0.833 | 0.839 |
+| Pathway-Aware Fusion | 0.801 | 0.966 | **0.738** | **0.954** | 0.829 | 0.854 |
+
+*(F1 and AUC are the two most important metrics. F1 balances precision and recall — was the prediction right, and did we find all the cases? AUC measures how confidently the model separates different subtypes — scale: 0.5 = random, 1.0 = perfect. All metrics are averages across 5 folds of cross-validation. Accuracy is included for completeness but is less informative for imbalanced data. *EarlyFusionMLP is an ablation baseline — its results live in `ablation_fusion_comparison.csv`, excluded from the primary `model_comparison.csv`.)*
+
+**The headline takeaways:**
+
+1. **For breast cancer (more data):** IntermediateFusion wins (F1=0.808), but only narrowly over XGBoost (0.794). The gap is real but modest — 0.014 F1 difference.
+
+2. **For colon cancer (less data):** PathwayAwareFusion dominates (F1=0.738), with a +0.069 improvement over IntermediateFusion. The biological prior was the difference maker.
+
+3. **All models achieve excellent AUC** (0.91–0.97). Even when hard classification falters, the models are very confident in their rankings.
+
+4. **The simplest model (EarlyFusionMLP) beats IntermediateFusion on COAD.** More complexity is not always better.
+
+---
+
+## The Demo: Bringing It All Together
+
+All of this work culminates in a **Streamlit web application** that anyone can use. Here's what it does:
+
+### Prediction Tab
+
+You upload a CSV file containing a patient's multi-omics measurements (the app provides sample files for both cancers). The file format is simple: each row is a feature/gene, each column is a patient sample.
+
+The app then:
+1. Validates the format and preprocesses the data using the same scalers and imputers used during training
+2. Runs the selected model (XGBoost, IntermediateFusion, or Pathway-Aware Fusion)
+3. Shows the predicted subtype with a confidence percentage and a colour-coded tier:
+   - **Green (HIGH confidence):** >80% — strong prediction
+   - **Blue (MODERATE confidence):** 50-80% — reasonable but uncertain
+   - **Amber (LOW confidence):** <50% — the model is unsure; results should be interpreted cautiously
+4. Displays which features drove the prediction:
+   - For XGBoost: a SHAP waterfall plot showing how each gene pushed the prediction up or down
+   - For fusion models: an Integrated Gradients bar chart, colour-coded by modality (blue=mRNA, green=miRNA, orange=methylation, purple=CNV)
+5. **Optional: AI Research Summary.** If you provide a Groq API key (free, from console.groq.com), the app calls a large language model to generate a clinical context summary — describing the predicted subtype, its biological characteristics, and relevant treatment considerations. If no key is provided, the app works normally without summaries.
+
+You can upload a batch file with multiple patients — the app processes all of them and lets you download all predictions as a CSV.
+
+### Model Comparison Tab
+
+This tab shows everything at once, with no file upload needed:
+
+- **Trophy banner** showing the best overall model
+- **Metric highlight cards** for Best F1, Precision, Recall, and Best AUC
+- **Full metrics table** with all 5 models, both cancers, all metrics — styled to highlight the best values in green and worst in red
+- **ROC Curves** — for each model, a curve showing how the true positive rate changes as the decision threshold varies. The further the curve bends toward the top-left corner, the better the model. All curves include AUC values in the legend
+- **Per-fold AUC breakdown** — expandable table showing how consistent each model is across the 5 cross-validation folds
+- **Radar chart** — comparing all models across F1, precision, recall, AUC, NMI, and ARI simultaneously
+- **Latent space visualization** — a t-SNE plot (precomputed) showing how the IntermediateFusion model clusters patients. Each dot is a patient, coloured by their true subtype. Good models produce tight, well-separated clusters
+- **Training convergence graphs** — loss curves showing how each model learned epoch by epoch, with validation F1 overlaid
+- **Confusion matrices** — for all 4 model types (XGBoost, RF, IntermediateFusion, PathwayFusion), showing exactly which subtypes get confused with which
+- **Biological validation** — KEGG pathway enrichment table, GO enrichment results, and pathway attention bar chart
+- **Ablation results** — modality removal bar chart, fusion comparison table, and the missing modality degradation curve
+
+### Demo Datasets
+
+The app comes with two categories of pre-generated patient files for testing:
+
+**Real TCGA patients (20 BRCA + 12 COAD):** Actual de-identified cancer patients from the held-out validation folds — never seen during training. These represent honest performance: what the model would do with a real new patient. Each BRCA subtype has 4 samples; each COAD subtype has at least 3 (CMS4 has too few patients). There's also a single "highest-confidence" patient per subtype — the patient the model is most confident about for each cancer type. These are great for demonstrations.
+
+**Synthetic patients (50 BRCA + 40 COAD):** Statistically generated profiles that aren't real people. Each synthetic patient's 15,000 measurements are sampled independently from the per-feature distribution of their subtype: `feature_value = random_sample_from(N(class_mean, class_std))`. This produces patients with the right subtype-level signal but realistic individual variation. They're useful for testing the model on "brand new patients it has never seen" and understanding which modalities drive each prediction.
+
+---
+
+## The Engineering Behind the Scenes
+
+This isn't just a bunch of models — it's a carefully engineered research system designed for reproducibility, fairness, and auditability.
+
+### Everything Is Reproducible
+
+Every random number in the entire project is controlled. A single function, `set_seeds(42)`, sets the random state for Python, NumPy, PyTorch, and even the operating system's hash function. Anyone who downloads this code and runs it with the same data will get the exact same results.
+
+All hyperparameters (model settings like learning rate, number of trees, latent dimensions) live in a single file, `config.yaml`. Nothing is hardcoded inside scripts. To change how a model trains, you edit one number in one place.
+
+### No Data Leakage — Guaranteed
+
+The preprocessing pipeline enforces strict separation between training and testing data:
+
+1. Patients are split into folds first — stored in `data/cv_folds.json` and never regenerated
+2. Every model uses the exact same folds
+3. The scaler and imputer are fitted on training data only, then applied to test data
+4. Every fold preparation includes an assertion: "assert no training patients appear in the test set"
+5. All 10 folds (5 BRCA + 5 COAD) pass this check
+
+### Everything Is Logged
+
+Every single training run appends a row to `experiment_log.csv` — 276 runs in total. Each row records: when it ran, what model, which cancer, which fold, all hyperparameters, all metrics, and where the model file was saved. You can trace any number in any table back to the exact experiment that produced it.
+
+### Codebase by the Numbers
+
+- **6 source code modules** (`src/`): ~1,850 lines of Python
+- **15 automation scripts** (`scripts/`): ~4,300 lines — everything from training to attribution to demo preparation
+- **23 automated tests** (`tests/`): verifying model shapes, preprocessing integrity, CV fold safety, metric computations, and seed reproducibility
+- **7 computational notebooks**: interactive documents for exploration, visualization, and analysis
+- **14 planning documents** (`content/`): the design specs and roadmaps that guided the entire project
+- **40 trained model files** (`models/`): 5 architectures × 2 cancers × 5 folds (some × 1 fold for ablated variants)
+- **164 results files** (`results/`): metrics tables, plots, SHAP values, enrichment results, quality control reports
+- **29 demo artifacts** (`app/model_artifacts/`): the pre-trained models, scalers, imputers, configs, and precomputed explanations needed to run the app
+
+### Technology Stack
+
+Python 3.11 · PyTorch 2.7.1 (CUDA 11.8 for GPU acceleration) · scikit-learn 1.6.1 · XGBoost 2.1.4 · SHAP 0.49.1 · Captum 0.8.0 · gseapy 1.1.11 · Streamlit 1.50.0 · Groq SDK (AI summaries) · joblib · matplotlib · seaborn · plotly
+
+---
+
+## What We Learned
+
+### 1. Multi-omics beats single-omics.
+Using all four data types together (mRNA + miRNA + methylation + CNV) produces F1=0.808 on breast cancer. Our ablation showed mRNA is the most critical modality (removing it causes the largest drop), while miRNA is the least useful individually.
+
+### 2. How you combine data matters — but only at sufficient scale.
+Intermediate fusion (separate networks per modality) outperforms early concatenation on the larger BRCA dataset (0.808 vs 0.794 for XGBoost). On the smaller COAD dataset, the simpler EarlyFusionMLP wins (0.751 vs 0.669 for IntermediateFusion).
+
+### 3. Biological knowledge rescues small datasets.
+KEGG pathway structure gave a +0.069 F1 gain on colon cancer — the biggest improvement in the project — precisely where data was scarce. On the data-rich BRCA case, the same biological prior didn't help (essentially tied with IntermediateFusion).
+
+### 4. Simple models remain surprisingly competitive.
+XGBoost at F1=0.794 on breast cancer was only 0.014 behind the best deep learning model. The lesson: always train simple baselines first. They often match or beat complex architectures on small data.
+
+### 5. Some data can be actively harmful.
+Removing miRNA from the colon cancer fusion model *improved* performance from F1=0.669 to 0.802 — a +0.133 gain. A modality was acting as pure noise. This is a genuine scientific finding, not a bug.
+
+### 6. Explainability works, but with clear limits.
+We can trace individual predictions back to specific genes and pathways. Cell cycle and p53 emerged as significant for breast cancer — biologically plausible results. But KEGG enrichment was empty for 6 out of 8 model-cancer combinations. The pathway attention mechanism didn't learn strong focus (weights were nearly uniform). Interpretability is partially achievable, partially aspirational.
+
+### 7. Sanity checks catch real problems.
+Our label-shuffle test revealed the global ANOVA pre-selection issue instantly. Without it, we might have reported inflated performance numbers without understanding why. Documenting dataset limitations honestly is more valuable than pretending they don't exist.
+
+### 8. AUC and F1 tell different stories.
+Random Forest had the highest AUC (0.971) but the second-worst F1 (0.602). When evaluating medical models, look at both: AUC for ranking ability (how well the model separates patients), F1 for decision quality (how often the model is right when forced to choose). One metric alone can be deeply misleading.
+
+---
+
+## Honest Limitations
+
+This project has real constraints that matter:
+
+1. **Feature selection contaminated the data.** The top genes were pre-selected using labels from all patients before splitting. Every model's F1 is slightly inflated. The *comparisons* between models are fair (all models share this bias), but the absolute numbers should be interpreted with this caveat.
+
+2. **Colon cancer has a 4-patient subtype.** CMS4 Mesenchymal appears only 4 times. It's essentially unlearnable. Some validation folds contain zero CMS4 patients, making per-class metrics undefined. COAD results are noisy and less reliable than BRCA results.
+
+3. **Colon cancer has high variance.** F1 standard deviations of 0.09–0.14 on COAD (compared to 0.05–0.07 on BRCA) mean individual fold results swing wildly. The PathwayFusion COAD F1 of 0.738 comes with a standard deviation of 0.142 — meaning in some folds it might be 0.60, in others 0.88.
+
+4. **miRNA is half-missing for breast cancer.** 166 of 366 miRNA measurements are entirely absent. The model can't use what isn't there.
+
+5. **The pathway attention mechanism didn't work as intended.** It found real performance gains on COAD, but the attention weights didn't concentrate on known cancer pathways — the "interpretable biology" promise of this architecture wasn't fully realized.
+
+6. **Enrichment analysis hit walls.** For XGBoost and all COAD models, no statistically significant KEGG pathways were found. The biological validation story is stronger for BRCA IntermediateFusion than for any other model-cancer combination.
+
+7. **Final deliverables are external to the repository.** The project was tagged `v1.0-final` on April 29, 2026 with message "all deliverables complete for submission," but the final report PDF, presentation slides, and demo video are not present in this repository's working tree. The repository is currently private.
+
+---
+
+## What's Next (Future Work)
+
+Several directions were planned but not pursued:
+- **Third cancer type (GS-GBM, glioblastoma):** Would have tested generalization across very different tumour biology
+- **VAE-based latent fusion:** Using variational autoencoders to learn more robust latent representations, especially useful for missing data
+- **Automatic missing-modality imputation:** Instead of just zero-filling missing modalities, learn to predict what the missing values should be
+- **Cross-cancer generalization:** Can a model trained on breast cancer say anything useful about colon cancer?
+
+---
+
+*Built by Dineth Hettiarachchi as a BSc Computer Science final-year project.*  
+*Academic research prototype — not for clinical use.*  
+*Data source: MLOmics benchmark dataset (TCGA origin, CC-BY-4.0).*  
+*Project tagged v1.0-final on April 29, 2026.*

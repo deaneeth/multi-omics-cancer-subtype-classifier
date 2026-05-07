@@ -209,4 +209,103 @@ python -c "import pandas as pd; df=pd.read_csv('experiment_log.csv'); print(df.d
 
 ---
 
-*Tier 2 and Tier 3 fixes to follow.*
+---
+
+## Tier 2 — Should-fix
+
+### T2.1 — Document no-held-out-test-set decision
+
+**Commit:** `2c827f9` — `docs(eval): T2.1 document no-held-out-test-set decision and T2.5 EarlyFusionMLP exclusion`
+
+Added Evaluation Protocol note to README: explains CV-only design with sample-size
+justification (~500 BRCA / ~450 COAD samples), acknowledges optimistic bias, and
+recommends independent cohort validation before clinical use.
+
+### T2.2 — Fix Streamlit hardcoded feature counts and miRNA fallback
+
+**Commit:** `48313bd` — `fix(app): T2.2 replace hardcoded feature counts with config-driven values`
+
+- Sidebar cancer caption now reads `n_features` from `load_config_json()`.
+- About panel `_about_cancer` string uses same dynamic values.
+- `_mirna_count` fallback changed from BRCA-specific `366` to `cfg["modality_dims"].get("mirna", cfg["modality_dims"].get("miRNA", 0))`.
+
+### T2.3 — Update CLAUDE.md test count and Python version
+
+**Updated on disk** (`.claude/CLAUDE.md` is gitignored):
+- Python version corrected: 3.9 → 3.11.
+- Feature count corrected: `~15,200` → `15,366 (BRCA) / 15,200 (COAD)`.
+- Added Test Suite section noting 32 tests and Python 3.11 / 3.14 compatibility.
+
+### T2.4 — Verify scaler artifact sharing
+
+**No code change required.** Verified that `prepare_demo_artifacts.py` fits a single
+imputer+scaler on the best-fold training data and saves it once as
+`per_modality_scaler_{c}.pkl` and `imputer_{c}.pkl`. All three model families in the
+Streamlit app load the same artifacts via `load_demo_artifacts()`. During CV training,
+`prepare_fold_data()` fits a fold-specific scaler (correct; no leakage).
+
+### T2.5 — Explain EarlyFusionMLP exclusion from main comparison
+
+**Commit:** `2c827f9` (same commit as T2.1)
+
+Updated EarlyFusionMLP row in README Models table to explain it is an ablation baseline
+excluded from the primary comparison, with pointer to `results/metrics/ablation_fusion_comparison.csv`.
+
+### T2.6 — Pin groq version
+
+**Commit:** `48313bd` (same commit as T2.2)
+
+`requirements.txt`: `groq>=0.9.0` → `groq>=0.9.0,<1.0.0` to stay in the stable 0.x API.
+
+---
+
+## Tier 3 — Polish
+
+### T3.1 — Remove duplicate helpers from run_ablations.py (H-1, H-2)
+
+**Commit:** `97d8347` — `refactor/docs: Tier 3 polish`
+
+Removed local `compute_class_weights()` and `dataframes_to_numpy()` from
+`scripts/run_ablations.py`; added canonical imports from `src.utils` instead.
+
+### T3.2 — Delete orphan scaler artifacts (H-3)
+
+**Commit:** `97d8347`
+
+`git rm app/model_artifacts/scaler_brca.pkl app/model_artifacts/scaler_coad.pkl`.
+These were never loaded (real artifacts are `per_modality_scaler_{suffix}.pkl`).
+
+### T3.3 — Track docs/PROJECT_FILE_TREE.md (I-3)
+
+**Commit:** `97d8347`
+
+File was untracked; now committed to the repository.
+
+### T3.4 — Add data card (M-3)
+
+**Commit:** `97d8347`
+
+Created `docs/DATA_CARD.md` following Datasheets for Datasets format:
+cohort details, modality descriptions, file format notes, known limitations
+(class imbalance, TCGA batch effects, positional label alignment, KEGG coverage gap,
+no independent test set, upstream feature-selection leakage), preprocessing summary,
+and citation guidance.
+
+### T3.5 — Supervisor credit (M-4)
+
+**Commit:** `97d8347`
+
+Added supervisor placeholder to README Author section.
+
+---
+
+## Final Status
+
+| Tier | Items | Status |
+|---|---|---|
+| Tier 1 | T1.1–T1.9 | Complete |
+| Tier 2 | T2.1–T2.6 | Complete |
+| Tier 3 | T3.1–T3.5 | Complete |
+
+All 32 tests passing. Branch: `fix/audit-followup-2026-05`.  
+Ready for merge to `dev` (then `main` via squash merge per git workflow).
