@@ -129,7 +129,10 @@ class PerModalityScaler:
         """Fit StandardScalers on training data only."""
         for name in modality_names:
             scaler = StandardScaler()
-            scaler.fit(data_dict[name])
+            # Pass .values (numpy array) to avoid sklearn's feature-name
+            # validation, which rejects DataFrames with non-string column names
+            # (e.g. miRNA CSV rows that parse as float NaN).
+            scaler.fit(data_dict[name].values)
             self.scalers[name] = scaler
             logger.info(f"Fitted scaler for {name}: {data_dict[name].shape}")
         return self
@@ -139,7 +142,7 @@ class PerModalityScaler:
         result = {}
         for name in modality_names:
             df = data_dict[name]
-            scaled = self.scalers[name].transform(df)
+            scaled = self.scalers[name].transform(df.values)
             result[name] = pd.DataFrame(scaled, index=df.index, columns=df.columns)
         return result
 
@@ -209,10 +212,14 @@ def prepare_fold_data(
     val_dict = {}
     for mod_key in MODALITY_KEYS:
         df = modality_data[mod_key]
-        # Ensure column names are all strings (miRNA has mixed float/str names)
+        # Ensure column names are all strings (miRNA has numeric-looking names
+        # that sklearn StandardScaler rejects when mixed with string names).
+        # Use .copy() so sklearn doesn't see a view with stale column metadata.
         df.columns = df.columns.astype(str)
-        train_dict[mod_key] = df.loc[df.index.isin(train_ids)]
-        val_dict[mod_key] = df.loc[df.index.isin(val_ids)]
+        train_dict[mod_key] = df.loc[df.index.isin(train_ids)].copy()
+        val_dict[mod_key] = df.loc[df.index.isin(val_ids)].copy()
+        train_dict[mod_key].columns = train_dict[mod_key].columns.astype(str)
+        val_dict[mod_key].columns = val_dict[mod_key].columns.astype(str)
 
     # 4. Impute NaN — fit on train ONLY, transform both
     imputer = PerModalityImputer()
