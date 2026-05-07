@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 
 import pandas as pd
 import yaml
@@ -155,7 +156,7 @@ def main():
                 all_passed = False
             if label_path:
                 checksums[f"{cancer}_{'toy' if args.toy else 'full'}"] = {
-                    "path": label_path,
+                    "path": Path(label_path).as_posix(),
                     "sha256": sha256_file(label_path),
                 }
         else:

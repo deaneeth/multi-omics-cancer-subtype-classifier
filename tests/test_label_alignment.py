@@ -8,6 +8,7 @@ since the checksums were recorded by scripts/verify_label_alignment.py.
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -71,11 +72,11 @@ def test_label_file_checksum_matches_recorded() -> None:
         pytest.skip(f"No checksum record for {key}; run scripts/verify_label_alignment.py --toy")
 
     record = checksums[key]
-    label_path = record["path"]
-    if not os.path.exists(label_path):
+    label_path = Path(record["path"])   # handles both / and \ on any OS
+    if not label_path.exists():
         pytest.skip(f"Label file not found at recorded path {label_path}")
 
-    actual_sha = _sha256(label_path)
+    actual_sha = _sha256(str(label_path))
     assert actual_sha == record["sha256"], (
         f"Label file checksum mismatch for {label_path}!\n"
         f"Recorded: {record['sha256']}\n"
