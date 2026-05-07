@@ -41,7 +41,7 @@ def sha256_file(path: str) -> str:
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def verify_cancer(cancer_type: str, config: dict, use_toy: bool) -> bool:
+def verify_cancer(cancer_type: str, config: dict, use_toy: bool) -> tuple[bool, str | None]:
     cancer_short = cancer_type.split("-")[1]
     passed = True
 
@@ -66,7 +66,7 @@ def verify_cancer(cancer_type: str, config: dict, use_toy: bool) -> bool:
         matches = glob.glob(label_pattern)
         if not matches:
             print(f"  SKIP: No label file found at {label_pattern}")
-            return True  # not a failure if raw data is absent
+            return True, None  # not a failure if raw data is absent
         label_path = matches[0]
 
         mrna_pattern = os.path.join(
@@ -78,14 +78,14 @@ def verify_cancer(cancer_type: str, config: dict, use_toy: bool) -> bool:
         mrna_matches = glob.glob(mrna_pattern)
         if not mrna_matches:
             print(f"  SKIP: No mRNA file found for {cancer_type}")
-            return True
+            return True, None
         mrna_path = mrna_matches[0]
 
     if not os.path.exists(label_path):
         if use_toy:
             print(f"  SKIP: No toy label file for {cancer_type} at {label_path}")
-            return True
-        return True
+            return True, None
+        return True, None
 
     # ── Load files ─────────────────────────────────────────────────────────
     labels_df = pd.read_csv(label_path)
@@ -130,7 +130,7 @@ def verify_cancer(cancer_type: str, config: dict, use_toy: bool) -> bool:
         dist = labels_df["Label"].value_counts().sort_index().to_dict()
         print(f"  INFO toy distribution: {dist} (full-data check skipped for toy)")
 
-    return passed, label_path
+    return passed, str(Path(label_path).as_posix())
 
 
 def main():
@@ -149,19 +149,14 @@ def main():
         cancers = ["GS-BRCA", "GS-COAD"]
 
     for cancer in cancers:
-        result = verify_cancer(cancer, config, use_toy=args.toy)
-        if isinstance(result, tuple):
-            passed, label_path = result
-            if not passed:
-                all_passed = False
-            if label_path:
-                checksums[f"{cancer}_{'toy' if args.toy else 'full'}"] = {
-                    "path": Path(label_path).as_posix(),
-                    "sha256": sha256_file(label_path),
-                }
-        else:
-            if not result:
-                all_passed = False
+        passed, label_path = verify_cancer(cancer, config, use_toy=args.toy)
+        if not passed:
+            all_passed = False
+        if label_path:
+            checksums[f"{cancer}_{'toy' if args.toy else 'full'}"] = {
+                "path": Path(label_path).as_posix(),
+                "sha256": sha256_file(label_path),
+            }
 
     # ── Save checksums ─────────────────────────────────────────────────────
     checksum_path = "data/label_file_checksums.json"
