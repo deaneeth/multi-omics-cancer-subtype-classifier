@@ -2933,6 +2933,49 @@ def main():
                     )
                 st.plotly_chart(fig_radar, use_container_width=True)
 
+        # --- Calibration Analysis ---
+        section_divider()
+        st.markdown("#### Calibration Analysis")
+        st.caption(
+            "Expected Calibration Error (ECE) measures confidence-accuracy alignment "
+            "(lower is better). Reliability diagrams show average accuracy per confidence bin."
+        )
+        _calib_csv = os.path.join(RESULTS_DIR, "calibration", "calibration_summary.csv")
+        if os.path.exists(_calib_csv):
+            _calib_df = pd.read_csv(_calib_csv)
+            _calib_cancer = selected_cancer if (comp_df is not None and selected_cancer != "All") else cancer_type
+            _calib_view = _calib_df[_calib_df["cancer"] == _calib_cancer] if _calib_cancer in _calib_df["cancer"].values else _calib_df
+            _calib_summary = (
+                _calib_view.groupby("model")[["ece", "mce", "brier"]]
+                .agg(["mean", "std"])
+                .round(4)
+            )
+            _calib_summary.columns = ["ECE mean", "ECE std", "MCE mean", "MCE std", "Brier mean", "Brier std"]
+            st.dataframe(_calib_summary, use_container_width=True)
+
+            # Show reliability diagram for the selected cancer
+            _calib_cancer_short = "brca" if "BRCA" in _calib_cancer else "coad"
+            _model_prefix_map = {
+                "XGBoost": "xgb", "RandomForest": "rf",
+                "IntermediateFusion": "fusion", "PathwayFusion": "pathway_fusion",
+            }
+            _calib_cols = st.columns(2)
+            _col_idx = 0
+            for _model_label, _prefix in _model_prefix_map.items():
+                _img_path = os.path.join(
+                    RESULTS_DIR, "calibration",
+                    f"reliability_{_prefix}_{_calib_cancer_short}.png"
+                )
+                if os.path.exists(_img_path):
+                    with _calib_cols[_col_idx % 2]:
+                        st.image(_img_path, caption=_model_label, use_container_width=True)
+                    _col_idx += 1
+        else:
+            st.info(
+                "Calibration plots not yet generated. "
+                "Run `python scripts/calibration_analysis.py` to produce them."
+            )
+
         # =============================================================
         # LATENT SPACE VISUALIZATION
         # =============================================================
