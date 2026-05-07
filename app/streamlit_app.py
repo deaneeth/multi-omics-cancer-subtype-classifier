@@ -2012,10 +2012,13 @@ def main():
             help="GS-BRCA: Breast cancer, 5 molecular subtypes. "
             "GS-COAD: Colon adenocarcinoma, 4 CMS subtypes.",
         )
-        if cancer_type == "GS-BRCA":
-            st.caption("671 samples · 5 subtypes · 15,366 features")
-        else:
-            st.caption("260 samples · 4 subtypes · 15,200 features")
+        _sidebar_cfg = load_config_json(cancer_type)
+        _sidebar_total = sum(_sidebar_cfg.get("modality_dims", {}).values()) or (
+            15366 if cancer_type == "GS-BRCA" else 15200
+        )
+        _sidebar_n_sub = _sidebar_cfg.get("n_classes") or len(_sidebar_cfg.get("class_names", {}))
+        _sidebar_n_samples = 671 if cancer_type == "GS-BRCA" else 260
+        st.caption(f"{_sidebar_n_samples} samples · {_sidebar_n_sub} subtypes · {_sidebar_total:,} features")
 
         st.markdown("---")
 
@@ -2033,11 +2036,7 @@ def main():
 
         st.markdown("---")
 
-        _about_cancer = (
-            "GS-BRCA (5 subtypes) · 15,366 features"
-            if cancer_type == "GS-BRCA"
-            else "GS-COAD (4 subtypes) · 15,200 features"
-        )
+        _about_cancer = f"{cancer_type} ({_sidebar_n_sub} subtypes) · {_sidebar_total:,} features"
         st.markdown(
             '<details class="custom-details"><summary>{chev} About this project</summary>'
             '<div class="details-body">'
@@ -2192,7 +2191,7 @@ def main():
 """,
                     unsafe_allow_html=True,
                 )
-                _mirna_count = cfg["modality_dims"].get("mirna", 366)
+                _mirna_count = cfg["modality_dims"].get("mirna", cfg["modality_dims"].get("miRNA", 0))
                 _n_subtypes = cfg.get("n_classes") or len(cfg.get("class_names", {}))
                 _total_feats = cfg.get(
                     "total_features", sum(cfg["modality_dims"].values())
