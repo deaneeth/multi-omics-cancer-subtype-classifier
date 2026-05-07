@@ -79,8 +79,19 @@ def load_labels(cancer_type: str, config: dict, use_toy: bool = False) -> pd.Ser
 
     For raw data, uses glob to match *_label_num.csv (numeric prefix varies).
     For toy data, loads the fixed-name file from data/toy/.
-    Labels are positionally aligned with modality columns — sample IDs
-    are attached from the first available modality.
+
+    POSITIONAL ALIGNMENT CONTRACT:
+        Label assignment is positional — the i-th row of the label CSV is
+        assigned to the i-th sample ID from the mRNA feature file. The MLOmics
+        benchmark guarantees this ordering. There is NO sample-ID column in the
+        label file to verify row-by-row alignment.
+
+        To confirm alignment integrity, run:
+            python scripts/verify_label_alignment.py [--toy]
+
+        Expected SHA-256 of the label files is recorded in
+        ``data/label_file_checksums.json``. If label files are ever regenerated,
+        re-run the verification script to refresh checksums and audit alignment.
 
     Args:
         cancer_type: e.g. "GS-BRCA".
