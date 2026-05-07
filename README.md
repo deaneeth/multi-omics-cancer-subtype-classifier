@@ -208,7 +208,7 @@ Python 3.11 · PyTorch 2.7 (CUDA 11.8) · scikit-learn · XGBoost · SHAP · Cap
 
 **Dineth Hettiarachchi** — BSc Computer Science Final Year Project
 
-*Supervised by:* [Supervisor name — University of Westminster, Department of Computer Science]
+*Supervised by:* Mr. Gayan Perera — NSBM Green University, Department of Computer Science (in partnership with University of Plymouth)
 
 ---
 
