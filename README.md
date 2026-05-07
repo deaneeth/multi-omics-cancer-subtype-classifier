@@ -144,6 +144,29 @@ python scripts/train_fusion.py --toy --epochs 5
 python -m pytest tests/ -v
 ```
 
+## Computational Requirements
+
+Hardware target: Intel Core i7 11th Gen, 16 GB RAM, NVIDIA 4 GB VRAM (CUDA 11.8).
+
+Toy-data benchmarks (CPU only, `python scripts/measure_runtime.py`):
+
+| Model | Train time (toy, 10 ep) | Inference latency (ms/batch) | Parameters |
+|---|---|---|---|
+| XGBoost | ~2 s | ~6 ms | 50 trees |
+| RandomForest | ~1 s | ~7 ms | 100 trees |
+| IntermediateFusion | ~6 s | ~2 ms | 4 037 K |
+| PathwayAwareFusion | ~2 s | ~15 ms | 3 657 K |
+
+Full-data 5-fold CV training times (estimated, GPU-accelerated):
+
+| Model | Approximate time |
+|---|---|
+| XGBoost / RandomForest | 5–15 min per cancer |
+| IntermediateFusion | 20–40 min per cancer |
+| PathwayAwareFusion | 25–50 min per cancer |
+
+Per-fold runtime stats: `results/metrics/runtime_summary.csv`
+
 ## Key Outputs
 
 - `results/metrics/model_comparison.csv` — F1, precision, recall, NMI, ARI, AUC across all models.

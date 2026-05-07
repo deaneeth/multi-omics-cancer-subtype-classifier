@@ -1,0 +1,5 @@
+model,train_time_s,peak_memory_mb,inference_latency_ms,n_params
+XGBoost,2.35,0.0,6.112,N/A (50 trees)
+RandomForest,0.85,0.4,7.28,N/A (100 trees)
+IntermediateFusion,6.14,62.6,1.735,4036613
+PathwayAwareFusion,1.53,0.3,14.695,3656252
