@@ -29,6 +29,10 @@ PROJECT_ROOT = os.path.dirname(APP_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.models import IntermediateFusionModel, PathwayAwareFusionModel  # noqa: E402
+from src.patient_converter import (  # noqa: E402
+    MODALITY_LABELS,
+    MODALITY_NOTES,
+)
 
 ARTIFACT_DIR = os.path.join(APP_DIR, "model_artifacts")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
@@ -308,10 +312,22 @@ def load_latent_space_data(cancer_type: str = "GS-BRCA"):
 
 
 @st.cache_data
-def load_fusion_attributions(cancer_type: str = "GS-BRCA"):
-    """Load precomputed Integrated Gradients attribution for fusion model."""
+def load_fusion_attributions(cancer_type: str = "GS-BRCA", model_type: str = "intermediate"):
+    """Load precomputed Integrated Gradients attribution for fusion model.
+
+    Parameters
+    ----------
+    cancer_type : str
+        "GS-BRCA" or "GS-COAD".
+    model_type : str
+        "pathway" loads pathway_fusion_attribution_results_{suffix}.json;
+        "intermediate" (default) loads fusion_attribution_results_{suffix}.json.
+    """
     suffix = "brca" if cancer_type == "GS-BRCA" else "coad"
-    path = os.path.join(ARTIFACT_DIR, f"fusion_attribution_results_{suffix}.json")
+    if model_type == "pathway":
+        path = os.path.join(ARTIFACT_DIR, f"pathway_fusion_attribution_results_{suffix}.json")
+    else:
+        path = os.path.join(ARTIFACT_DIR, f"fusion_attribution_results_{suffix}.json")
     if os.path.exists(path):
         with open(path) as f:
             return json.load(f)
@@ -515,6 +531,92 @@ def compute_shap_explanation(model, X_scaled: np.ndarray, sample_idx: int = 0):
         base_values=float(base_val),
         data=X_scaled[sample_idx],
     )
+
+
+def compute_ig_attribution_live(
+    model: torch.nn.Module,
+    X_scaled: np.ndarray,
+    cfg: dict,
+    sample_idx: int,
+    n_steps: int = 50,
+) -> list:
+    """Compute Integrated Gradients on-the-fly for one uploaded sample.
+
+    Used as a fallback when the sample is not in the precomputed attribution
+    JSON.  Returns a list of up to 20 feature-attribution dicts (same schema
+    as the precomputed JSON), or an empty list on any failure.
+    """
+    try:
+        from captum.attr import IntegratedGradients
+    except ImportError:
+        return []
+
+    try:
+        modality_order = cfg["modality_order"]
+        modality_dims = cfg["modality_dims"]
+        feature_names = cfg["feature_names"]
+
+        x_np = X_scaled[sample_idx : sample_idx + 1]
+
+        start = 0
+        inputs_list = []
+        for mod in modality_order:
+            dim = modality_dims[mod]
+            inputs_list.append(torch.FloatTensor(x_np[:, start : start + dim]))
+            start += dim
+        inputs = tuple(inputs_list)
+
+        # Captum-compatible wrapper: tuple inputs → logits
+        class _TupleWrapper(torch.nn.Module):
+            def __init__(self, inner, order):
+                super().__init__()
+                self.inner = inner
+                self.order = order
+
+            def forward(self, *args):
+                return self.inner({k: args[i] for i, k in enumerate(self.order)})
+
+        model.eval()
+        wrapper = _TupleWrapper(model, modality_order)
+
+        with torch.no_grad():
+            pred_class = int(wrapper(*inputs).argmax(dim=1).item())
+
+        ig = IntegratedGradients(wrapper)
+        baselines = tuple(torch.zeros_like(inp) for inp in inputs)
+        attributions = ig.attribute(
+            inputs, baselines=baselines, target=pred_class, n_steps=n_steps
+        )
+
+        attr_concat = (
+            torch.cat([a.detach() for a in attributions], dim=1).numpy()[0]
+        )
+        abs_attr = np.abs(attr_concat)
+        top_indices = np.argsort(abs_attr)[::-1][:20]
+
+        top_features = []
+        for idx in top_indices:
+            fname = (
+                feature_names[idx] if idx < len(feature_names) else f"feature_{idx}"
+            )
+            pos, modality = 0, "unknown"
+            for mod in modality_order:
+                dim = modality_dims[mod]
+                if idx < pos + dim:
+                    modality = mod
+                    break
+                pos += dim
+            top_features.append(
+                {
+                    "feature_name": fname,
+                    "modality": modality,
+                    "attribution": float(attr_concat[idx]),
+                    "abs_attribution": float(abs_attr[idx]),
+                }
+            )
+        return top_features
+    except Exception:
+        return []
 
 
 def _call_groq_chat_completion(
@@ -2157,7 +2259,9 @@ def main():
         st.stop()
 
     # --- Tabs ---
-    tab_predict, tab_compare = st.tabs(["Prediction", "Model Comparison"])
+    tab_predict, tab_compare, tab_convert = st.tabs(
+        ["Prediction", "Model Comparison", "Data Converter"]
+    )
 
     # =================================================================
     # TAB 1: PREDICTION
@@ -2326,30 +2430,59 @@ def main():
                     )
                 render_confidence_chart(probs, cfg, theme_tokens, sample_to_explain)
 
-                # --- SHAP Explanation ---
+                # --- Feature Importance (SHAP / IG) ---
                 section_divider()
+                _is_fusion_model = model_choice != "XGBoost (Baseline)"
                 st.markdown(
-                    '<div class="section-title">Feature Importance (SHAP)</div>',
+                    '<div class="section-title">{}</div>'.format(
+                        "Feature Importance (Integrated Gradients)"
+                        if _is_fusion_model
+                        else "Feature Importance (SHAP)"
+                    ),
                     unsafe_allow_html=True,
                 )
                 st.markdown(
-                    "The waterfall plot shows which genomic features influenced "
-                    "this prediction. **Red bars** push toward the predicted class; "
-                    "**blue bars** push away from it. Features are ranked by "
-                    "absolute impact."
+                    "{} shows which genomic features influenced "
+                    "this prediction. {} Features are ranked by "
+                    "absolute impact.".format(
+                        "The bar chart" if _is_fusion_model else "The waterfall plot",
+                        (
+                            "**Blue bars** push toward the predicted class; "
+                            "**grey bars** push away from it."
+                            if _is_fusion_model
+                            else
+                            "**Red bars** push toward the predicted class; "
+                            "**blue bars** push away from it."
+                        ),
+                    )
                 )
 
-                st.markdown(
-                    '<details class="custom-details custom-details-main">'
-                    "<summary>{chev} What is SHAP?</summary>"
-                    '<div class="details-body">'
-                    "<strong>SHAP (SHapley Additive exPlanations)</strong> is a "
-                    "game-theoretic approach to explain individual predictions. Each "
-                    "feature receives a contribution score showing how much it pushed "
-                    "the prediction toward or away from a particular class."
-                    "</div></details>".format(chev=_CHEVRON_SVG),
-                    unsafe_allow_html=True,
-                )
+                if _is_fusion_model:
+                    st.markdown(
+                        '<details class="custom-details custom-details-main">'
+                        "<summary>{chev} What are Integrated Gradients?</summary>"
+                        '<div class="details-body">'
+                        "<strong>Integrated Gradients (IG)</strong> is a gradient-based "
+                        "attribution method for neural networks. It measures each input "
+                        "feature's contribution by integrating gradients along a path from "
+                        "a zero baseline to the actual input. Each bar shows how much a "
+                        "genomic feature pushed the prediction toward or away from the "
+                        "predicted class."
+                        "</div></details>".format(chev=_CHEVRON_SVG),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<details class="custom-details custom-details-main">'
+                        "<summary>{chev} What is SHAP?</summary>"
+                        '<div class="details-body">'
+                        "<strong>SHAP (SHapley Additive exPlanations)</strong> is a "
+                        "game-theoretic approach to explain individual predictions. Each "
+                        "feature receives a contribution score showing how much it pushed "
+                        "the prediction toward or away from a particular class."
+                        "</div></details>".format(chev=_CHEVRON_SVG),
+                        unsafe_allow_html=True,
+                    )
 
                 top_shap_features = []
 
@@ -2379,14 +2512,34 @@ def main():
                             "It achieves the best F1 score on GS-COAD (0.738) by leveraging "
                             "pathway-based structural regularisation."
                         )
-                    fusion_attr = load_fusion_attributions(cancer_type)
+                    _mt = "pathway" if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)" else "intermediate"
+                    fusion_attr = load_fusion_attributions(cancer_type, model_type=_mt)
                     selected_sid = sample_ids[sample_to_explain]
 
                     if fusion_attr and selected_sid in fusion_attr["sample_ids"]:
                         attr_idx = fusion_attr["sample_ids"].index(selected_sid)
-                        top_feats = fusion_attr["top_features_per_sample"][attr_idx][
-                            :15
-                        ]
+                        _live_top_feats = fusion_attr["top_features_per_sample"][attr_idx][:20]
+                        _attr_source_note = (
+                            "Blue bars push toward predicted class; grey bars push away. "
+                            "Attribution via Integrated Gradients (Captum)."
+                        )
+                    else:
+                        _ig_model = (
+                            load_pathway_fusion_model(cancer_type)
+                            if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)"
+                            else load_fusion_model(cancer_type)
+                        )
+                        with st.spinner("Computing Integrated Gradients…"):
+                            _live_top_feats = compute_ig_attribution_live(
+                                _ig_model, X_scaled, cfg, sample_to_explain
+                            )
+                        _attr_source_note = (
+                            "Blue bars push toward predicted class; grey bars push away. "
+                            "Attribution via Integrated Gradients (Captum, computed live)."
+                        )
+
+                    if _live_top_feats:
+                        top_feats = _live_top_feats[:15]
                         top_shap_features = [
                             {
                                 "feature": f.get("feature_name", ""),
@@ -2436,7 +2589,7 @@ def main():
                         st.plotly_chart(fig_attr, use_container_width=True)
 
                         mod_counts = {}
-                        for f in fusion_attr["top_features_per_sample"][attr_idx][:20]:
+                        for f in _live_top_feats[:20]:
                             mod_counts[f["modality"]] = (
                                 mod_counts.get(f["modality"], 0) + 1
                             )
@@ -2445,28 +2598,62 @@ def main():
                             for m, c in sorted(mod_counts.items(), key=lambda x: -x[1])
                         )
                         st.caption(f"Top 20 features by modality: {mod_text}")
-                        _attr_note = (
-                            "Red bars push toward predicted class; blue bars push away. "
-                            "Attribution via Integrated Gradients (Captum)."
-                        )
-                        if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
-                            _attr_note += (
-                                " Attributions shown are from the Intermediate Fusion model "
-                                "(same feature space — both models share identical input features)."
-                            )
-                        st.caption(_attr_note)
-                    elif fusion_attr:
-                        _suf = "brca" if cancer_type == "GS-BRCA" else "coad"
-                        st.info(
-                            f"Precomputed attributions available for: "
-                            f"{', '.join(fusion_attr['sample_ids'])}. "
-                            f"Upload sample_input_{_suf}.csv to see them."
-                        )
+                        st.caption(_attr_source_note)
                     else:
                         st.info(
-                            "Run `python scripts/precompute_fusion_attribution.py` "
-                            "to enable Integrated Gradients attribution display."
+                            "Integrated Gradients attribution could not be computed. "
+                            "Ensure `captum` is installed and the model artifacts are present."
                         )
+
+                    # --- Pathway Attention Weights (PathwayAwareFusion only) ---
+                    if model_choice == "Pathway-Aware Fusion (Deep + Bio Prior)":
+                        section_divider()
+                        st.subheader("Pathway-Level Attention Weights")
+                        st.caption(
+                            "Top pathways attended by the PathwayAwareFusion encoder for the mRNA modality. "
+                            "Weights are very uniform (0.003–0.004 range), reflecting structural "
+                            "regularisation rather than sharp feature selection."
+                        )
+                        _attn_enrichment = load_enrichment_results()
+                        if _attn_enrichment and "attention_scores" in _attn_enrichment:
+                            _attn_df = _attn_enrichment["attention_scores"]
+                            _cancer_attn = _attn_df[
+                                _attn_df["cancer_type"] == cancer_type
+                            ]
+                            if len(_cancer_attn) > 0:
+                                _top_attn = _cancer_attn.nlargest(
+                                    10, "mean_attention_weight"
+                                ).iloc[::-1].copy()
+                                fig_attn = go.Figure(
+                                    go.Bar(
+                                        x=_top_attn["mean_attention_weight"].tolist(),
+                                        y=_top_attn["pathway"].tolist(),
+                                        orientation="h",
+                                        marker_color="#4CAF50",
+                                        text=[
+                                            f"{v:.5f}"
+                                            for v in _top_attn["mean_attention_weight"]
+                                        ],
+                                        textposition="outside",
+                                        textfont=dict(size=10),
+                                    )
+                                )
+                                fig_attn.update_layout(
+                                    title=dict(
+                                        text=f"Top 10 Attended KEGG Pathways — {cancer_type}",
+                                        font=dict(size=14),
+                                    ),
+                                    xaxis_title="Mean Attention Weight",
+                                    height=420,
+                                )
+                                apply_plotly_theme(fig_attn, theme_tokens)
+                                st.plotly_chart(fig_attn, use_container_width=True)
+                        else:
+                            st.info(
+                                "Pathway attention scores not available. Re-run "
+                                "`scripts/precompute_fusion_attribution.py --model pathway` "
+                                "to generate them."
+                            )
 
                 # --- LLM Research Summary ---
                 section_divider()
@@ -3384,6 +3571,284 @@ def main():
                 "BRCA shows robustness up to 20% missingness. "
                 "COAD degrades earlier due to smaller sample size (260 samples)."
             )
+
+    # =================================================================
+    # TAB 3: DATA CONVERTER
+    # =================================================================
+    with tab_convert:
+        st.markdown(
+            '<div class="section-title">Lab Data Converter</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "Convert your hospital or research omics data into the format "
+            "the MLOmics prediction pipeline expects. "
+            "Upload one CSV file per modality, download the prepared file, "
+            "then upload it directly in the **Prediction** tab."
+        )
+
+        # ── Normalisation requirements ────────────────────────────────
+        with st.expander("Before you upload — normalisation requirements", expanded=False):
+            st.markdown(
+                "This model was trained on TCGA benchmark data in a "
+                "**z-scored, log-transformed** space. For best results, "
+                "your data should be in a similar normalised format. "
+                "However, you can select your data format below and the "
+                "converter will apply the appropriate transform."
+            )
+            st.markdown("**Supported input formats:**")
+            st.markdown(
+                "- **Z-scored** (ideal): Your bioinformatics team has already "
+                "z-score normalized per feature across a cohort\n"
+                "- **Log2-transformed**: Standard output from RNA-seq/methylation "
+                "pipelines (e.g. log2(TPM+1), M-values)\n"
+                "- **Raw counts/values**: Integer counts from sequencing or beta "
+                "values (0-1) from methylation arrays\n"
+            )
+            st.warning(
+                "**Single-sample normalization caveat:** When normalizing non-z-scored "
+                "data from a single patient (without a reference cohort), the converter "
+                "uses a robust approximation (median + IQR-based std). This is less "
+                "accurate than cohort-based normalization. For production use, "
+                "z-score your data against a reference cohort before upload."
+            )
+            st.info(
+                "Missing modalities are allowed — their features are filled with 0 "
+                "(the training mean in z-scored space). Prediction quality will degrade "
+                "proportionally to the number of modalities omitted."
+            )
+
+        section_divider()
+
+        # ── Step 1 — Patient info ─────────────────────────────────────
+        st.markdown("#### Step 1 — Patient Information")
+        conv_col1, conv_col2 = st.columns([1, 2])
+        with conv_col1:
+            conv_cancer = st.selectbox(
+                "Cancer Type",
+                ["GS-BRCA", "GS-COAD"],
+                help="Select the cancer type this patient was diagnosed with.",
+                key="conv_cancer",
+            )
+        with conv_col2:
+            conv_sample_id = st.text_input(
+                "Patient / Sample ID",
+                value="PT-HOSP-2026-001",
+                help="Any identifier — appears in the output CSV and prediction results.",
+                key="conv_sample_id",
+            ).strip()
+
+        # ── Data format selector ─────────────────────────────────────
+        st.markdown("")  # spacing
+        fmt_col1, fmt_col2 = st.columns([1, 2])
+        with fmt_col1:
+            conv_format = st.selectbox(
+                "Data Format",
+                options=["zscore", "log2", "raw", "beta"],
+                format_func=lambda x: {
+                    "zscore": "Already z-score normalized",
+                    "log2": "Log2-transformed (log2(TPM+1), M-values, etc.)",
+                    "raw": "Raw counts / values (not log-transformed)",
+                    "beta": "Beta values 0-1 (methylation arrays)",
+                }[x],
+                help=(
+                    "Select the format of your uploaded data. "
+                    "If unsure, ask your bioinformatics team. "
+                    "'Z-score normalized' means the data has been centered (mean=0) "
+                    "and scaled (std=1) per feature."
+                ),
+                key="conv_format",
+            )
+        with fmt_col2:
+            _fmt_notes = {
+                "zscore": "No transform applied. Data used as-is.",
+                "log2": "Will z-score your log2 values using a robust single-sample method (median + IQR).",
+                "raw": "Will apply log2(x+1) transform, then z-score. For mRNA/miRNA counts.",
+                "beta": "Will convert to M-values [log2(B/(1-B))], then z-score. For methylation arrays.",
+            }
+            st.caption(_fmt_notes[conv_format])
+            if conv_format != "zscore":
+                st.caption(
+                    "Note: Single-sample normalization is approximate. "
+                    "Predictions are most reliable with cohort-normalized (z-scored) data."
+                )
+
+        section_divider()
+
+        # ── Step 2 — Upload modality files ────────────────────────────
+        st.markdown("#### Step 2 — Upload Modality Files")
+        st.caption(
+            "Each file should have feature names as the first column (or first row) "
+            "and numeric values for this patient in the remaining column(s). "
+            "All four modalities are optional — upload only what your lab has run."
+        )
+
+        up_col1, up_col2 = st.columns(2)
+        with up_col1:
+            st.markdown("**mRNA Expression**")
+            st.caption("Gene symbols as feature names (e.g. ESR1, TP53)")
+            mrna_file = st.file_uploader(
+                "mRNA CSV", type=["csv"], key="conv_mrna",
+                label_visibility="collapsed",
+            )
+
+            st.markdown("**DNA Methylation**")
+            st.caption("Gene-linked probe names as feature names (e.g. BRCA1, ESR1)")
+            methy_file = st.file_uploader(
+                "Methylation CSV", type=["csv"], key="conv_methy",
+                label_visibility="collapsed",
+            )
+
+        with up_col2:
+            st.markdown("**miRNA Expression**")
+            st.caption("miRNA IDs — any format auto-converted (hsa-miR-21 works)")
+            mirna_file = st.file_uploader(
+                "miRNA CSV", type=["csv"], key="conv_mirna",
+                label_visibility="collapsed",
+            )
+
+            st.markdown("**Copy Number Variation (CNV)**")
+            st.caption("Gene symbols as feature names (e.g. ERBB2, MYC, CDKN2A)")
+            cnv_file = st.file_uploader(
+                "CNV CSV", type=["csv"], key="conv_cnv",
+                label_visibility="collapsed",
+            )
+
+        section_divider()
+
+        # ── Step 3 — Convert ─────────────────────────────────────────
+        st.markdown("#### Step 3 — Convert")
+
+        any_file = any([mrna_file, mirna_file, methy_file, cnv_file])
+        if not any_file:
+            st.info("Upload at least one modality file above, then click Convert.")
+        else:
+            provided = [
+                m for m, f in [("mRNA", mrna_file), ("miRNA", mirna_file),
+                                ("Methylation", methy_file), ("CNV", cnv_file)]
+                if f is not None
+            ]
+            st.success(f"Files ready: {', '.join(provided)}")
+
+        if st.button(
+            "Convert & Prepare File",
+            disabled=not any_file,
+            type="primary",
+            key="conv_run",
+        ):
+            _conv_cfg_suffix = "brca" if conv_cancer == "GS-BRCA" else "coad"
+            _conv_cfg_path = os.path.join(
+                ARTIFACT_DIR, f"config_{_conv_cfg_suffix}.json"
+            )
+            if not os.path.exists(_conv_cfg_path):
+                st.error(
+                    f"Config file not found: {_conv_cfg_path}. "
+                    "Run `prepare_demo_artifacts.py` first."
+                )
+            else:
+                import json as _json
+                with open(_conv_cfg_path) as _f:
+                    _conv_cfg = _json.load(_f)
+
+                with st.spinner("Mapping features and building output file…"):
+                    # Import fresh at call-time — prevents stale module cache
+                    # on Streamlit hot-reload when patient_converter.py changes.
+                    import importlib as _importlib
+                    import src.patient_converter as _pc_mod
+                    _importlib.reload(_pc_mod)
+                    _convert = _pc_mod.convert_patient_data
+
+                    _result = _convert(
+                        cancer_type=conv_cancer,
+                        sample_id=conv_sample_id if conv_sample_id else "PATIENT-001",
+                        modality_files={
+                            "mrna":  mrna_file,
+                            "mirna": mirna_file,
+                            "methy": methy_file,
+                            "cnv":   cnv_file,
+                        },
+                        cfg=_conv_cfg,
+                        data_format=conv_format,
+                    )
+
+                section_divider()
+                st.markdown("#### Step 4 — Coverage Report & Download")
+
+                # ── Coverage table ────────────────────────────────────
+                _cov_cols = st.columns(4)
+                _status_colours = {
+                    "good":         "green",
+                    "partial":      "orange",
+                    "poor":         "red",
+                    "not_provided": "grey",
+                }
+                _status_labels = {
+                    "good":         "Good",
+                    "partial":      "Partial",
+                    "poor":         "Low match",
+                    "not_provided": "Not provided",
+                }
+                _mod_icons = {
+                    "mrna": "mRNA", "mirna": "miRNA",
+                    "methy": "Methylation", "cnv": "CNV",
+                }
+                for col_idx, mod in enumerate(["mrna", "mirna", "methy", "cnv"]):
+                    cov = _result.coverage.get(mod)
+                    with _cov_cols[col_idx]:
+                        if cov is None or cov.status == "not_provided":
+                            st.metric(
+                                _mod_icons[mod],
+                                "—",
+                                "Not uploaded",
+                            )
+                        else:
+                            st.metric(
+                                _mod_icons[mod],
+                                f"{cov.pct:.0f}%",
+                                f"{cov.matched}/{cov.total} features",
+                            )
+
+                # ── Warnings ──────────────────────────────────────────
+                if _result.warnings:
+                    for w in _result.warnings:
+                        st.warning(w)
+                else:
+                    _matched_mods = sum(
+                        1 for cov in _result.coverage.values()
+                        if cov.status != "not_provided"
+                    )
+                    if _matched_mods > 0:
+                        st.success(
+                            f"Conversion complete. "
+                            f"{_matched_mods} modality file(s) processed successfully."
+                        )
+
+                # ── How to use note ───────────────────────────────────
+                st.info(
+                    "**Next step:** Download the file below, then go to the "
+                    "**Prediction** tab, select **"
+                    + conv_cancer
+                    + "** as cancer type, and upload the downloaded file."
+                )
+
+                # ── Download button ───────────────────────────────────
+                _filename = (
+                    f"mlomics_ready_{conv_sample_id.replace(' ', '_')}"
+                    f"_{_conv_cfg_suffix}.csv"
+                )
+                st.download_button(
+                    label="Download Prediction-Ready CSV",
+                    data=_result.to_csv_bytes(),
+                    file_name=_filename,
+                    mime="text/csv",
+                    type="primary",
+                    key="conv_download",
+                )
+                st.caption(
+                    f"File: {_filename}  |  "
+                    f"Shape: 1 row × {len(_result.df.columns) - 1:,} features  |  "
+                    f"Cancer: {conv_cancer}  |  Sample ID: {_result.sample_id}"
+                )
 
     # =================================================================
     # FOOTER
