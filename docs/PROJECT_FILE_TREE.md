@@ -1,6 +1,6 @@
 # MLOmics — Complete Project File Tree
 
-*Every file in this repository, listed with its full path and purpose. Generated 2026-05-03. Total: 441 files.*
+*Every file in this repository, listed with its full path and purpose. Updated 2026-05-11 (full audit). Total tracked files: ~450+.*
 
 ---
 
@@ -17,7 +17,6 @@
 | `AGENTS.md` | AI agent guidance: commands, import system, architecture, key invariants, data gotchas, hardware constraints, git workflow |
 | `CHANGELOG.md` | Keep-a-changelog format: v0.0-scaffold through v0.5-demo and unreleased changes. Documents every feature addition, fix, and notable finding |
 | `explain.md` | FAQ document: answers clinical context questions — why subtype classification matters, treatment implications, best demo files to use, project positioning |
-| `abstract.md` | Thesis abstract: project summary, key results (BRCA F1=0.808, COAD F1=0.738, miRNA artifact +0.133, Cell cycle/p53 enrichment), keywords |
 
 ### Root hidden files
 
@@ -28,55 +27,70 @@
 
 ---
 
-## `src/` — Core Library (6 modules, ~1,850 lines)
+## `src/` — Core Library (7 modules, ~2,235 lines)
 
 | File | Lines | Purpose |
 |---|---|---|
 | `src/__init__.py` | 2 | Package marker — makes `src/` an importable Python package |
-| `src/utils.py` | 205 | `set_seeds(42)` — sets PYTHONHASHSEED, random, numpy, torch (CPU+CUDA), cuDNN flags for full reproducibility. `load_config()` — loads `config.yaml`. `log_experiment()` — appends to `experiment_log.csv`. `get_device()` — returns `cuda` or `cpu`. `compute_class_weights()` — inverse-frequency class weights. `dataframes_to_numpy()` — converts DataFrame dicts to float32 arrays |
-| `src/data_loader.py` | 269 | `MODALITY_KEYS` — canonical order: `["mrna","mirna","methy","cnv"]`. `load_modality()` — loads CSV, transposes (features×samples → samples×features). `load_labels()` — globs `*_label_num.csv`, positionally aligns with mRNA columns. `get_common_samples()` — finds intersection of sample IDs across all 4 modalities. `create_sample_map()` — builds `sample_map.csv` and `dropped_samples.csv` |
-| `src/preprocessing.py` | 449 | `PerModalityImputer` — median imputation per modality, fit on train only. `PerModalityScaler` — z-score StandardScaler per modality, fit on train only. `prepare_fold_data()` — full fold pipeline: load→split→assert no overlap→impute→assert zero NaN→scale→return. `concatenate_modalities()` — joins modality DataFrames with `modality_` prefixed feature names. `create_cv_folds()` — patient-level stratified 5-fold CV, verifies 1:1 patient-to-sample mapping, saves to `cv_folds.json`. `load_cv_folds()` — loads canonical fold assignments |
-| `src/models.py` | 381 | `ModalityEncoder` — 2-layer dense: input_dim→256→64 (BatchNorm+ReLU+Dropout). `FusionClassifier` — MLP head: total_latent→128→num_classes. `IntermediateFusionModel` — 4 encoders → concat latents → classifier. `PathwayAttentionEncoder` — dual-path mRNA: Path A groups by KEGG pathway (mean-pool→attention→project), Path B handles unmapped genes. `PathwayAwareFusionModel` — replaces mRNA encoder with PathwayAttentionEncoder. `EarlyFusionMLP` — ablation baseline: concat→256→128→n_classes. `MultiOmicsDataset` — PyTorch Dataset wrapping `{modality: tensor}` dicts |
+| `src/utils.py` | 242 | `set_seeds(42)` — sets PYTHONHASHSEED, random, numpy, torch (CPU+CUDA), cuDNN flags for full reproducibility. `load_config()` — loads `config.yaml`. `log_experiment()` — appends to `experiment_log.csv`. `get_device()` — returns `cuda` or `cpu`. `compute_class_weights()` — inverse-frequency class weights. `dataframes_to_numpy()` — converts DataFrame dicts to float32 arrays |
+| `src/data_loader.py` | 280 | `MODALITY_KEYS` — canonical order: `["mrna","mirna","methy","cnv"]`. `load_modality()` — loads CSV, transposes (features×samples → samples×features). `load_labels()` — globs `*_label_num.csv`, positionally aligns with mRNA columns. `get_common_samples()` — finds intersection of sample IDs across all 4 modalities. `create_sample_map()` — builds `sample_map.csv` and `dropped_samples.csv` |
+| `src/preprocessing.py` | 456 | `PerModalityImputer` — median imputation per modality, fit on train only. `PerModalityScaler` — z-score StandardScaler per modality, fit on train only. `prepare_fold_data()` — full fold pipeline: load→split→assert no overlap→impute→assert zero NaN→scale→return. `concatenate_modalities()` — joins modality DataFrames with `modality_` prefixed feature names. `create_cv_folds()` — patient-level stratified 5-fold CV, verifies 1:1 patient-to-sample mapping, saves to `cv_folds.json`. `load_cv_folds()` — loads canonical fold assignments |
+| `src/models.py` | 381 | `ModalityEncoder` — 2-layer dense: input_dim→256→64 (BatchNorm+ReLU+Dropout). `FusionClassifier` — MLP head: total_latent→128→num_classes. `IntermediateFusionModel` — 4 encoders → concat latents → classifier (4,036,613 params). `PathwayAttentionEncoder` — dual-path mRNA: Path A groups by KEGG pathway (mean-pool→attention→project), Path B handles unmapped genes. `PathwayAwareFusionModel` — replaces mRNA encoder with PathwayAttentionEncoder (3,656,252 params). `EarlyFusionMLP` — ablation baseline: concat→256→128→n_classes. `MultiOmicsDataset` — PyTorch Dataset wrapping `{modality: tensor}` dicts |
 | `src/evaluation.py` | 170 | `compute_metrics()` — returns precision/recall/F1/NMI/ARI/accuracy (macro-averaged, zero_division=0). `compute_fold_summary()` — mean±std across folds. `print_metrics_table()` — ASCII box table. `save_metrics()` — per-fold + summary row to CSV |
 | `src/explainability.py` | 376 | `compute_tree_shap()` — SHAP TreeExplainer for XGBoost/RF, subsamples to max_samples. `compute_deep_attribution()` — Captum Integrated Gradients via `_FusionModelWrapper` (converts tuple→dict). `extract_top_features()` — top-N by mean absolute attribution with modality labels. `run_kegg_enrichment()` / `run_go_enrichment()` — gseapy enrichr with fallback to file export. `check_known_pathways()` — validates 9 canonical cancer pathways against enrichment results |
+| `src/patient_converter.py` | 330 | `convert_patient_data()` — in-memory conversion of per-modality lab CSVs to single prediction-ready row. `_transform_values()` — applies one of 4 format transforms: zscore (pass-through), log2 (robust z-score), raw (log2(x+1) then z-score), beta (M-value then z-score). `ConversionResult` dataclass. `ModCoverage` dataclass. Auto-detects CSV orientation (features-as-rows or features-as-cols), normalises miRNA names (dash→dot format), reports per-modality coverage with status tiers (good/partial/poor/not_provided) |
 
 ---
 
-## `scripts/` — Automation & Training (15 scripts, ~4,300 lines)
+## `scripts/` — Automation & Training (22 scripts)
 
 | Script | Lines | Purpose |
 |---|---|---|
-| `scripts/train_baselines.py` | 324 | CLI: `--model xgb/rf/all`, `--toy`. Trains XGBoost and/or RandomForest with 5-fold CV on concatenated early-fusion features. Outputs: `models/baseline_{xgb,rf}/*.pkl`, `results/metrics/{xgb,rf}_*.csv`, confusion matrices, experiment log entries |
-| `scripts/train_fusion.py` | 373 | CLI: `--toy`, `--epochs`. Trains IntermediateFusionModel with 5-fold CV. Per-fold: `set_seeds(42)`, prepare fold data, train with early stopping (patience=10), ReduceLROnPlateau, class-weighted CrossEntropyLoss, gradient clipping. Saves `.pt` checkpoints, training curves, confusion matrices |
-| `scripts/train_pathway_fusion.py` | 382 | Same structure as `train_fusion.py` but trains PathwayAwareFusionModel. Loads `data/processed/pathway_gene_mapping.json`. Saves attention scores per sample to `pathway_attention_scores.csv` |
-| `scripts/run_explainability.py` | 324 | Full explainability pipeline: loads best-fold fusion model (from `experiment_log.csv`), runs Integrated Gradients, extracts top-50 features, runs KEGG+GO enrichment, validates against 9 canonical cancer pathways, generates plots with modality-coloured bars |
-| `scripts/shap_analysis.py` | 254 | CLI: `--model xgb/rf`, `--cancer`, `--toy`. Computes SHAP values for best tree-model fold per cancer. Outputs: summary plots, bar plots, top-50 CSV, SHAP values NPZ |
-| `scripts/run_ablations.py` | 579 | CLI: `--only a1/a2/a3`. Three ablation experiments: A1) modality removal — retrains IntermediateFusion with one modality omitted; A2) fusion comparison — XGBoost vs EarlyFusionMLP vs IntermediateFusion; A3) missing modality — zero-pads features at 10-50% rates. Outputs CSVs and plots |
-| `scripts/run_evaluation.py` | 99 | Convenience entrypoint: loads per-fold NPZ predictions, prints consolidated metrics table, delegates to `compute_auc.py` for macro OVR AUC refresh |
-| `scripts/compute_auc.py` | 263 | Re-inference from all 40 saved models. Loads each model, runs on its validation fold, computes macro-averaged One-vs-Rest AUC via `roc_auc_score`. Outputs: `auc_scores.csv` (40 rows) and `auc_summary.csv` (8 rows) |
-| `scripts/prepare_demo_artifacts.py` | 324 | CLI: `--cancer GS-BRCA/GS-COAD/all`. Exports best-fold models, per-modality scalers, imputers, config JSONs, sample input CSVs, and preprocessing artifacts to `app/model_artifacts/`. Generates per-cancer files with `_brca`/`_coad` suffixes |
-| `scripts/precompute_fusion_attribution.py` | 260 | Runs Integrated Gradients on demo sample CSV for both IntermediateFusion and PathwayAwareFusion models. Outputs `fusion_attributions_{c}.npz` and `fusion_attribution_results_{c}.json`. Includes migration helper for legacy file renaming |
-| `scripts/precompute_latent_space.py` | 155 | Runs all training samples through `IntermediateFusionModel.get_latent()`, applies t-SNE dimensionality reduction, writes `latent_space_data_{c}.json` for demo visualization. Includes legacy combined-to-per-cancer file migration |
-| `scripts/create_toy_dataset.py` | 79 | Generates stratified 50-sample BRCA subset from full data, saves to `data/toy/` in original features×samples CSV format (transposed back). Used by `--toy` flag throughout the pipeline |
-| `scripts/create_test_datasets.py` | 292 | CLI: `--cancer`. Extracts real TCGA val-set patients from best CV fold, preprocesses with saved train-fitted artifacts, writes upload-ready CSVs with leading `sample_id` column to `app/test_datasets/test/`. Creates batch files (20 BRCA, 12 COAD), single-patient files per subtype, and metadata CSVs |
+| `scripts/train_baselines.py` | 398 | CLI: `--model xgb/rf/all`, `--toy`. Trains XGBoost and/or RandomForest with 5-fold CV on concatenated early-fusion features. Outputs: `models/baseline_{xgb,rf}/*.pkl`, `results/metrics/{xgb,rf}_*.csv`, confusion matrices, experiment log entries |
+| `scripts/train_fusion.py` | 450 | CLI: `--toy`, `--epochs`. Trains IntermediateFusionModel with 5-fold CV. Per-fold: `set_seeds(42)`, prepare fold data, train with early stopping (patience=10), ReduceLROnPlateau, class-weighted CrossEntropyLoss, gradient clipping. Saves `.pt` checkpoints, training curves, confusion matrices |
+| `scripts/train_pathway_fusion.py` | 459 | Same structure as `train_fusion.py` but trains PathwayAwareFusionModel. Loads `data/processed/pathway_gene_mapping.json`. Saves attention scores per sample to `pathway_attention_scores.csv` |
+| `scripts/run_explainability.py` | 378 | Full explainability pipeline: loads best-fold fusion model (from `experiment_log.csv`), runs Integrated Gradients, extracts top-50 features, runs KEGG+GO enrichment, validates against 9 canonical cancer pathways, generates plots with modality-coloured bars |
+| `scripts/shap_analysis.py` | 297 | CLI: `--model xgb/rf`, `--cancer`, `--toy`. Computes SHAP values for best tree-model fold per cancer. Outputs: summary plots, bar plots, top-50 CSV, SHAP values NPZ |
+| `scripts/run_ablations.py` | 674 | CLI: `--only a1/a2/a3`. Three ablation experiments: A1) modality removal — retrains IntermediateFusion with one modality omitted; A2) fusion comparison — XGBoost vs EarlyFusionMLP vs IntermediateFusion; A3) missing modality — zero-pads features at 10–50% rates. Imports `compute_class_weights` / `dataframes_to_numpy` from `src.utils` |
+| `scripts/run_evaluation.py` | 125 | Convenience entrypoint: loads per-fold NPZ predictions, prints consolidated metrics table, delegates to `compute_auc.py` for macro OVR AUC refresh |
+| `scripts/compute_auc.py` | 324 | Re-inference from all 40 saved models. Loads each model, runs on its validation fold, computes macro-averaged One-vs-Rest AUC via `roc_auc_score`. Outputs: `auc_scores.csv` (40 rows) and `auc_summary.csv` (8 rows) |
+| `scripts/compute_significance_tests.py` | 169 | Wilcoxon signed-rank test + Cohen's d + 95% bootstrap CI (n=10,000 resamples) for all pairwise model comparisons on both cancers. Outputs `significance_tests.csv` (12 rows) |
+| `scripts/calibration_analysis.py` | 213 | ECE, MCE, Brier score per fold for all 4 deployed models on both cancers. Generates reliability diagrams to `results/calibration/`. Outputs `calibration_summary.csv` |
+| `scripts/measure_runtime.py` | 259 | Benchmarks training time (toy, 10 epochs), peak memory (tracemalloc), and inference latency (median of 10 runs) per model. Outputs `runtime_summary.csv` with parameter counts |
+| `scripts/prepare_demo_artifacts.py` | 379 | CLI: `--cancer GS-BRCA/GS-COAD/all`. Exports best-fold models, per-modality scalers, imputers, config JSONs, sample input CSVs, and preprocessing artifacts to `app/model_artifacts/`. Generates per-cancer files with `_brca`/`_coad` suffixes |
+| `scripts/precompute_fusion_attribution.py` | 324 | Runs Integrated Gradients on demo sample CSV for both IntermediateFusion and PathwayAwareFusion models. Outputs `fusion_attributions_{c}.npz`, `fusion_attribution_results_{c}.json`, `pathway_fusion_attributions_{c}.npz`, `pathway_fusion_attribution_results_{c}.json` |
+| `scripts/precompute_latent_space.py` | 194 | Runs all training samples through `IntermediateFusionModel.get_latent()`, applies t-SNE dimensionality reduction, writes `latent_space_data_{c}.json` for demo visualization |
+| `scripts/create_toy_dataset.py` | 99 | Generates stratified 50-sample BRCA subset from full data, saves to `data/toy/` in original features×samples CSV format |
+| `scripts/create_test_datasets.py` | 344 | CLI: `--cancer`. Extracts real TCGA val-set patients from best CV fold, preprocesses with saved train-fitted artifacts, writes upload-ready CSVs to `app/test_datasets/test/`. Creates batch files (20 BRCA, 12 COAD), single-patient files per subtype, and metadata CSVs |
 | `scripts/create_synthetic_patients.py` | 435 | CLI: `--cancer`, `--n-per-subtype`. Generates synthetic patient profiles by sampling each of ~15,000 features from `N(class_mean, class_std)` per subtype, clipped to [-4.5, 4.5]. Outputs to `app/test_datasets/synthetic/` |
-| `scripts/validate_artifacts.py` | 199 | CLI: `--cancer`. Checks all demo artifacts exist, have expected structure, and are internally consistent (feature counts match config, NPZ arrays loadable, scaler dimensions correct). Exit code 0 = pass |
+| `scripts/create_demo_patients.py` | 215 | Generates single-patient prediction-ready CSVs with clinical backstories: Sarah Mitchell (Luminal A BRCA) and Robert Okonkwo (CMS2 COAD). Outputs to `app/test_datasets/demo/` |
+| `scripts/create_lab_patient_files.py` | 292 | Generates 4 per-modality lab-export-format CSVs for Amara Nwosu (synthetic Basal-like BRCA patient). Used to test the Data Converter tab end-to-end. Outputs to `app/test_datasets/demo/convertion/` |
+| `scripts/prepare_real_patient_upload.py` | 294 | Standalone CLI converter: accepts 4 per-modality CSVs → produces single upload-ready CSV. Alternative to the Streamlit Data Converter tab for batch/scripted use |
+| `scripts/generate_roc_curves.py` | 143 | Generates per-fold macro-averaged One-vs-Rest ROC curves for GS-BRCA (5-class). Creates 6-panel figure: 5 per-fold ROC curves with per-fold AUC in legends + 1 summary panel with mean AUC±std. Interpolates per-class ROC curves to common FPR grid and averages across classes. Loads predictions from `results/metrics/*_brca_fold*_predictions.npz`, AUC data from `auc_summary.csv`. Outputs `results/plots/roc_brca_models_per_fold.png` at 300 DPI |
+| `scripts/generate_roc_curves_coad.py` | 143 | Same as `generate_roc_curves.py` but for GS-COAD (4-class problem). Loads COAD fold predictions, generates `results/plots/roc_coad_models_per_fold.png`. Key finding: fusion models outperform tree models on COAD (data scarcity advantage) vs BRCA (tree dominance) |
+| `scripts/validate_artifacts.py` | 231 | CLI: `--cancer`. Checks all demo artifacts exist, have expected structure, and are internally consistent (feature counts match config, NPZ arrays loadable, scaler dimensions correct). Exit code 0 = pass |
+| `scripts/verify_label_alignment.py` | 184 | Verifies positional label alignment between mRNA CSV column order and label file row order. Records SHA-256 checksums of label files to `data/label_file_checksums.json` for `test_label_alignment.py` guard |
 
 ---
 
-## `tests/` — Automated Test Suite (6 test files + conftest, 23 tests)
+## `tests/` — Automated Test Suite (10 test files + conftest, 32 tests)
 
 | File | Tests | Purpose |
 |---|---|---|
 | `tests/__init__.py` | — | Package marker |
-| `tests/.gitkeep` | — | Keeps empty test directory in Git |
 | `tests/conftest.py` | — | Session-scoped fixtures: `_seed_everything()` (set_seeds(42) autouse), `config` (loads config.yaml), `toy_brca_fold` (first toy BRCA fold) |
-| `tests/test_models.py` | 5 | `test_modality_encoder_output_shape` — verifies (4,32)→(4,8). `test_intermediate_fusion_forward_and_latent_shapes` — logits (3,5), latent (3,24). `test_pathway_attention_encoder_produces_normalized_attention` — attention sums to 1. `test_pathway_aware_fusion_forward_shape` — logits (2,3), attention not None. `test_multiomics_dataset_returns_modality_dict_and_label` — correct dict keys and label type |
-| `tests/test_preprocessing.py` | 5 | `test_per_modality_imputer_fills_nan_and_all_nan_features` — zero NaN after imputation, all-NaN features→0.0. `test_per_modality_scaler_centers_training_data` — train means≈0. `test_prepare_fold_data_toy_has_no_nan` — end-to-end toy fold integrity. `test_scaler_fitted_on_train_only_val_not_centered` — val means≠0 proves scaler fit on train only. `test_concatenate_modalities_returns_prefixed_feature_names` — names like `mrna_g1` |
-| `tests/test_evaluation.py` | 2 | `test_compute_metrics_returns_expected_keys_and_ranges` — correct keys, values in [0,1]. `test_compute_fold_summary_generates_mean_and_std_for_each_metric` — mean/std keys present |
-| `tests/test_data_loader.py` | 3 | `test_load_modality_toy_returns_samples_by_features` — DataFrame shape, string index. `test_load_labels_toy_aligns_to_mrna_index` — index equality. `test_common_samples_are_present_in_all_modalities` — intersection subset check |
-| `tests/test_cv_folds.py` | 4 | `test_no_overlap_between_val_folds_brca` — no sample in multiple BRCA val folds. `test_no_overlap_between_val_folds_coad` — same for COAD. `test_no_train_val_overlap_within_fold_brca` — disjoint sets within each fold. `test_all_samples_covered_once_brca` — every sample appears exactly once in val |
-| `tests/test_utils.py` | 4 | `test_set_seeds_produces_reproducible_random_streams` — identical after re-seed. `test_load_config_contains_core_sections` — project/paths/modalities/fusion present. `test_log_experiment_creates_csv_with_expected_columns` — correct headers. `test_get_device_returns_torch_device` — returns `cuda` or `cpu` |
+| `tests/test_models.py` | 5 | `test_modality_encoder_output_shape`, `test_intermediate_fusion_forward_and_latent_shapes`, `test_pathway_attention_encoder_produces_normalized_attention`, `test_pathway_aware_fusion_forward_shape`, `test_multiomics_dataset_returns_modality_dict_and_label` |
+| `tests/test_preprocessing.py` | 5 | `test_per_modality_imputer_fills_nan_and_all_nan_features`, `test_per_modality_scaler_centers_training_data`, `test_prepare_fold_data_toy_has_no_nan`, `test_scaler_fitted_on_train_only_val_not_centered`, `test_concatenate_modalities_returns_prefixed_feature_names` |
+| `tests/test_evaluation.py` | 2 | `test_compute_metrics_returns_expected_keys_and_ranges`, `test_compute_fold_summary_generates_mean_and_std_for_each_metric` |
+| `tests/test_data_loader.py` | 3 | `test_load_modality_toy_returns_samples_by_features`, `test_load_labels_toy_aligns_to_mrna_index`, `test_common_samples_are_present_in_all_modalities` |
+| `tests/test_cv_folds.py` | 4 | `test_no_overlap_between_val_folds_brca`, `test_no_overlap_between_val_folds_coad`, `test_no_train_val_overlap_within_fold_brca`, `test_all_samples_covered_once_brca` |
+| `tests/test_utils.py` | 4 | `test_set_seeds_produces_reproducible_random_streams`, `test_load_config_contains_core_sections`, `test_log_experiment_creates_csv_with_expected_columns`, `test_get_device_returns_torch_device` |
+| `tests/test_label_alignment.py` | 4 | `test_label_count_matches_mrna_samples`, `test_label_index_order_matches_mrna_columns`, `test_class_distribution_sums_to_total`, `test_label_file_checksums_match_on_disk` — SHA-256 checksum guard against accidental label file regeneration |
+| `tests/test_save_load_roundtrip.py` | 1 | `test_intermediate_fusion_checkpoint_roundtrip` — saves IntermediateFusionModel to `.pt`, reloads, verifies predictions identical to atol=1e-6 |
+| `tests/test_cv_folds_enforcement.py` | 2 | `test_training_scripts_do_not_construct_kfold`, `test_training_scripts_call_load_cv_folds` — static AST checks that no training script directly constructs `KFold`/`StratifiedKFold` |
+| `tests/test_dashboard_preprocessing_equivalence.py` | 2 | `test_inference_preprocessing_matches_training_brca`, `test_inference_preprocessing_matches_training_coad` — verifies that loading saved scaler/imputer artifacts produces numerically identical output to `prepare_fold_data()` |
+
+**All 32 tests pass.** Tests use toy data (`use_toy=True`) via fixtures in `conftest.py`.
 
 ---
 
@@ -101,14 +115,16 @@
 
 ---
 
-## `docs/` — Project Documentation (4 files)
+## `docs/` — Project Documentation (6 files)
 
 | File | Purpose |
 |---|---|
-| `docs/PROJECT_SNAPSHOT.md` | Comprehensive project snapshot — 13 sections: identity, phase status, 5-model comparison table with all metrics, architectures, dataset facts, explainability findings, ablation results, Streamlit demo details, preprocessing verification, known limitations, complete filesystem map, genuine differentiators, open questions |
-| `docs/PROJECT_STORY.md` | Narrative project guide for non-technical audiences — the cancer subtype problem, data explained simply, full model journey (XGBoost→RF→EarlyFusionMLP→IntermediateFusion→PathwayAwareFusion), explainability story, ablation discoveries (miRNA artifact), complete results table, demo walkthrough, engineering infrastructure, 8 lessons learned, honest limitations |
-| `docs/PRESENTATION_NARRATION.md` | 15-minute presentation script — opening with patient analogy, data walkthrough, ANOVA discovery, model evolution, explainability, ablation findings, results table, demo screenshots, lessons learned, closing. Paced with slide hints |
+| `docs/PROJECT_SNAPSHOT.md` | Comprehensive project snapshot — 13 sections: identity, phase status, 5-model comparison table with all metrics (accuracy std ddof=1), architectures, dataset facts, explainability findings (SHAP/IG/KEGG top features verified), ablation results, Streamlit demo details (3 tabs), preprocessing verification, known limitations, complete filesystem map, genuine differentiators, open questions |
+| `docs/PROJECT_STORY.md` | Narrative project guide for non-technical audiences — cancer subtype problem, data explained simply, full model journey (XGBoost→RF→EarlyFusionMLP→IntermediateFusion→PathwayAwareFusion), explainability story, ablation discoveries (miRNA artifact +0.133), complete results table, demo walkthrough (all 3 tabs), engineering infrastructure, 8 lessons learned, honest limitations |
+| `docs/PRESENTATION_NARRATION.md` | 15-minute presentation script — opening with patient analogy, data walkthrough, ANOVA discovery, model evolution (with exact F1/AUC/d/p values), explainability, ablation findings, results table, demo screenshots (all 3 tabs including Lab Data Converter), lessons learned, closing with codebase stats |
 | `docs/preprocessing_verification_report.md` | 49-check audit results — 46/49 pass, 3 failures documented with root-cause analysis (label shuffle BRCA/COAD, all-NaN miRNA columns). All critical invariants confirmed |
+| `docs/DATA_CARD.md` | Datasheets-for-Datasets format: cohort details, known limitations, citation guidance |
+| `docs/PROJECT_FILE_TREE.md` | This file — complete annotated file tree of the repository |
 
 ---
 
@@ -127,76 +143,76 @@
 
 | File | Purpose |
 |---|---|
-| `app/streamlit_app.py` | ~2,290-line single-page Streamlit app. Sidebar: cancer type selector (BRCA/COAD), 3-model radio (XGBoost/IntermediateFusion/PathwayAwareFusion), About/HowTo/KeyFindings expandables. Tab 1 (Prediction): CSV uploader, sample download, preprocessing, prediction cards with confidence tiers, SHAP waterfall (XGBoost) / IG bar chart (fusion), Groq AI research summary. Tab 2 (Model Comparison): trophy banner, metric cards, full table, ROC curves, per-fold AUC, radar chart, t-SNE latent space, training curves, confusion matrices (4-model selector), biological validation (KEGG/GO/pathway attention), ablation results (modality removal/fusion comparison/missing modality curve). Uses `@st.cache_resource` for model loading |
+| `app/streamlit_app.py` | ~3,875-line single-page Streamlit app. Sidebar: cancer type selector (BRCA/COAD), 3-model radio (XGBoost/IntermediateFusion/PathwayAwareFusion), About/HowTo/KeyFindings expandables, version badge. **Tab 1 (Prediction):** CSV uploader, sample download, preprocessing, prediction cards with confidence tiers (HIGH/>80%/MODERATE/50-80%/LOW/<50%), SHAP waterfall (XGBoost) / IG bar chart (fusion models), Pathway-Level Attention Weights panel (PathwayAwareFusion only — top-10 KEGG bar chart), live IG fallback via Captum, Groq AI research summary. **Tab 2 (Model Comparison):** trophy banner, metric cards, full table, grouped Plotly bar chart, ROC curves, per-fold AUC breakdown, radar chart, t-SNE latent space, training curves, confusion matrices (4-model selector), biological validation (KEGG/GO/pathway attention), ablation results (modality removal/fusion comparison/missing modality curve). **Tab 3 (Lab Data Converter):** 4-step hospital upload workflow — patient info + data format selector (zscore/log2/raw/beta), modality file uploaders (4), convert button, coverage report + download. `importlib.reload(src.patient_converter)` in button handler prevents stale-module errors on hot-reload |
 | `app/sample_input_brca.csv` | Upload-ready sample CSV for BRCA — single de-identified TCGA patient, 15,366 features |
 | `app/sample_input_coad.csv` | Upload-ready sample CSV for COAD — single de-identified TCGA patient, 15,200 features |
 | `app/sample_input.csv` | Gitignored — legacy un-suffixed alias, regenerated by `prepare_demo_artifacts.py` |
 
-### `app/model_artifacts/` — Precomputed Demo Artifacts (29 files)
+### `app/model_artifacts/` — Precomputed Demo Artifacts (27 files)
 
-**Best-fold indices:** BRCA: xgb=fold3, fusion=fold3, pathway_fusion=fold3 (F1=0.869). COAD: xgb=fold0, fusion=fold3, pathway_fusion=fold1 (F1=0.913).
+**Best-fold indices:** BRCA: xgb=fold3, fusion=fold3, pathway_fusion=fold3. COAD: xgb=fold0, fusion=fold3, pathway_fusion=fold3.
 
-**Per-cancer configs:**
-
-| File | Description |
-|---|---|
-| `app/model_artifacts/config_brca.json` | BRCA feature names (15,366), class labels (5 subtypes with names), modality dimensions, best-fold indices |
-| `app/model_artifacts/config_coad.json` | COAD feature names (15,200), class labels (4 subtypes with names), modality dimensions, best-fold indices |
-
-**Preprocessing artifacts:**
+**Per-cancer configs (2 files):**
 
 | File | Description |
 |---|---|
-| `app/model_artifacts/scaler_brca.pkl` | Concat StandardScaler fitted on BRCA best training fold |
-| `app/model_artifacts/scaler_coad.pkl` | Concat StandardScaler fitted on COAD best training fold |
+| `app/model_artifacts/config_brca.json` | BRCA feature names (15,366), class labels (5 subtypes), modality dims, best-fold indices, hyperparameters |
+| `app/model_artifacts/config_coad.json` | COAD feature names (15,200), class labels (4 subtypes), modality dims, best-fold indices |
+
+**Preprocessing artifacts (4 files + 3 legacy gitignored):**
+
+| File | Description |
+|---|---|
 | `app/model_artifacts/imputer_brca.pkl` | PerModalityImputer fitted on BRCA best training fold |
 | `app/model_artifacts/imputer_coad.pkl` | PerModalityImputer fitted on COAD best training fold |
 | `app/model_artifacts/per_modality_scaler_brca.pkl` | PerModalityScaler fitted on BRCA best training fold |
 | `app/model_artifacts/per_modality_scaler_coad.pkl` | PerModalityScaler fitted on COAD best training fold |
+| `app/model_artifacts/config.json` | Legacy un-suffixed (gitignored, on-disk only) |
+| `app/model_artifacts/imputer.pkl` | Legacy un-suffixed (gitignored, on-disk only) |
+| `app/model_artifacts/per_modality_scaler.pkl` | Legacy un-suffixed (gitignored, on-disk only) |
 
-**Trained models (best fold per cancer):**
+**Trained models — best fold per cancer (6 files + 1 legacy gitignored):**
 
 | File | Description |
 |---|---|
-| `app/model_artifacts/xgb_best_brca.pkl` | Best-fold XGBoost model for BRCA (fold 3) |
-| `app/model_artifacts/xgb_best_coad.pkl` | Best-fold XGBoost model for COAD (fold 0) |
+| `app/model_artifacts/xgb_best_brca.pkl` | Best-fold XGBoost for BRCA (fold 3) |
+| `app/model_artifacts/xgb_best_coad.pkl` | Best-fold XGBoost for COAD (fold 0) |
 | `app/model_artifacts/fusion_best_brca.pt` | Best-fold IntermediateFusionModel for BRCA (fold 3) |
 | `app/model_artifacts/fusion_best_coad.pt` | Best-fold IntermediateFusionModel for COAD (fold 3) |
-| `app/model_artifacts/pathway_fusion_best_brca.pt` | Best-fold PathwayAwareFusionModel for BRCA (fold 3, F1=0.869) |
-| `app/model_artifacts/pathway_fusion_best_coad.pt` | Best-fold PathwayAwareFusionModel for COAD (fold 1, F1=0.913) |
+| `app/model_artifacts/pathway_fusion_best_brca.pt` | Best-fold PathwayAwareFusionModel for BRCA (fold 3) |
+| `app/model_artifacts/pathway_fusion_best_coad.pt` | Best-fold PathwayAwareFusionModel for COAD (fold 3) |
+| `app/model_artifacts/xgb_best.pkl` | Legacy un-suffixed (gitignored, on-disk only) |
 
-**Pathway mapping:**
-
-| File | Description |
-|---|---|
-| `app/model_artifacts/pathway_gene_mapping.json` | KEGG pathway→mRNA feature indices for both cancers + unmapped gene indices. Used by PathwayAwareFusion in the demo |
-
-**Precomputed visualizations & attributions:**
+**Pathway mapping (1 file):**
 
 | File | Description |
 |---|---|
-| `app/model_artifacts/latent_space_data_brca.json` | Precomputed t-SNE embeddings of BRCA latent space (from IntermediateFusion.get_latent()) |
+| `app/model_artifacts/pathway_gene_mapping.json` | KEGG pathway→mRNA feature index mapping. BRCA: 1,759/5,000 features across 311 pathways (35.18%); COAD: 1,874/5,000 across 310 pathways (37.48%) |
+
+**Precomputed attributions & visualizations (14 files):**
+
+| File | Description |
+|---|---|
+| `app/model_artifacts/latent_space_data_brca.json` | Precomputed t-SNE embeddings of BRCA latent space |
 | `app/model_artifacts/latent_space_data_coad.json` | Precomputed t-SNE embeddings of COAD latent space |
-| `app/model_artifacts/fusion_attribution_results_brca.json` | Precomputed Integrated Gradients per demo sample (IntermediateFusion, BRCA) |
-| `app/model_artifacts/fusion_attribution_results_coad.json` | Same for COAD |
-| `app/model_artifacts/fusion_attributions_brca.npz` | Raw IG attribution arrays (IntermediateFusion, BRCA) |
-| `app/model_artifacts/fusion_attributions_coad.npz` | Same for COAD |
-| `app/model_artifacts/pathway_fusion_attribution_results_brca.json` | Precomputed IG per demo sample (PathwayAwareFusion, BRCA) |
-| `app/model_artifacts/pathway_fusion_attribution_results_coad.json` | Same for COAD |
-| `app/model_artifacts/pathway_fusion_attributions_brca.npz` | Raw IG arrays (PathwayAwareFusion, BRCA) |
-| `app/model_artifacts/pathway_fusion_attributions_coad.npz` | Same for COAD |
-
+| `app/model_artifacts/fusion_attribution_results_brca.json` | IntermediateFusion precomputed IG results for demo sample, BRCA |
+| `app/model_artifacts/fusion_attribution_results_coad.json` | IntermediateFusion precomputed IG results for demo sample, COAD |
+| `app/model_artifacts/fusion_attributions_brca.npz` | Raw IntermediateFusion IG arrays, BRCA |
+| `app/model_artifacts/fusion_attributions_coad.npz` | Raw IntermediateFusion IG arrays, COAD |
+| `app/model_artifacts/pathway_fusion_attribution_results_brca.json` | PathwayAwareFusion precomputed IG results for demo sample, BRCA |
+| `app/model_artifacts/pathway_fusion_attribution_results_coad.json` | PathwayAwareFusion precomputed IG results for demo sample, COAD |
 **Legacy files (exist on disk, explicitly gitignored):**
 
 | File | Description |
 |---|---|
 | `app/model_artifacts/config.json` | Legacy un-suffixed config (pre-dates per-cancer split) |
-| `app/model_artifacts/scaler.pkl` | Legacy un-suffixed scaler |
 | `app/model_artifacts/xgb_best.pkl` | Legacy un-suffixed XGBoost model |
 | `app/model_artifacts/imputer.pkl` | Legacy un-suffixed imputer |
 | `app/model_artifacts/per_modality_scaler.pkl` | Legacy un-suffixed per-modality scaler |
 
-### `app/test_datasets/` — Demo Test Data (27 files)
+**Note:** `scaler_brca.pkl` and `scaler_coad.pkl` (old concat scalers) were deleted during audit T3.2. `per_modality_scaler_{brca,coad}.pkl` are the correct replacements.
+
+### `app/test_datasets/` — Demo Test Data (35 files)
 
 **Real TCGA patients (`test/` — 13 files):**
 
@@ -234,6 +250,19 @@
 | `app/test_datasets/synthetic/synthetic_coad_CMS3_Metabolic.csv` | 10 synthetic CMS3 patients |
 | `app/test_datasets/synthetic/synthetic_coad_CMS4_Mesenchymal.csv` | 10 synthetic CMS4 patients |
 | `app/test_datasets/synthetic/synthetic_coad_metadata.csv` | Reference: per-row labels + descriptions for COAD |
+
+**Demo patients (`demo/` — 8 files):**
+
+| File | Description |
+|---|---|
+| `app/test_datasets/demo/demo_patient_sarah_mitchell_BRCA.csv` | Single prediction-ready Luminal A BRCA patient (Sarah Mitchell). 1 row × 15,367 cols. Generated by `create_demo_patients.py` |
+| `app/test_datasets/demo/demo_patient_robert_okonkwo_COAD.csv` | Single prediction-ready CMS2 (Canonical) COAD patient (Robert Okonkwo). 1 row × 15,201 cols |
+| `app/test_datasets/demo/DATA_CARD_demo_patients.md` | Data card documenting Sarah/Robert generation methodology, expected predictions, and self-consistency caveat |
+| `app/test_datasets/demo/convertion/amara_nwosu_mrna.csv` | 5,000 mRNA features in lab export format (features as rows, hsa values as-is). Used to test Data Converter tab |
+| `app/test_datasets/demo/convertion/amara_nwosu_mirna.csv` | 200 miRNA features in miRBase dash format (hsa-miR-21). Auto-converted by patient_converter |
+| `app/test_datasets/demo/convertion/amara_nwosu_methylation.csv` | 5,000 DNA methylation features in lab format |
+| `app/test_datasets/demo/convertion/amara_nwosu_cnv.csv` | 5,000 CNV features in lab format |
+| `app/test_datasets/demo/convertion/DATA_CARD.md` | Data card documenting Amara Nwosu generation and expected converter behaviour (Basal-like, >95% confidence) |
 
 ---
 
@@ -569,6 +598,7 @@ Same checkpoint format as IntermediateFusion, with additional PathwayAttentionEn
 | `data/dropped_samples.csv` | 0 rows — all 931 samples kept (all had ≥50% modalities) |
 | `data/checksums_brca.txt` | SHA256 checksums for 5 raw BRCA files |
 | `data/checksums_coad.txt` | SHA256 checksums for 5 raw COAD files |
+| `data/label_file_checksums.json` | SHA-256 checksums of BRCA and COAD label CSV files. Loaded by `test_label_alignment.py` to guard against accidental label file regeneration |
 | `data/DATA_README.md` | Download instructions, citation, file placement, dataset statistics tables, CSV format notes, known limitations (ANOVA pre-selection), checksum verification |
 
 ---
@@ -588,6 +618,7 @@ Same checkpoint format as IntermediateFusion, with additional PathwayAttentionEn
 | `.agents/rules/repo-workflow.md` | Repository workflow rules for agent |
 
 **Skill bundles (40 files across 9 skill directories):**
+
 - `agent-browser/` — Browser automation skill
 - `code-quality/` — Code quality reference
 - `data-quality-frameworks/` — Data quality validation patterns
@@ -612,25 +643,22 @@ Same checkpoint format as IntermediateFusion, with additional PathwayAttentionEn
 ## Metadata
 
 ```
-Generated: 2026-05-03
-Project: MLOmics v1.0-final
+Generated: 2026-05-03 — Updated: 2026-05-11 (full deep audit)
+Project: MLOmics — Latent-Fusion Multi-Omics Classifier
 Author: Dineth Hettiarachchi
-Total files: 441
-Git branch: dev (HEAD = bac93b6)
-Git tags: v0.0-scaffold, v0.0.1-data, v0.1-preprocessing, v0.2-baselines, v0.3-fusion, v0.4-analysis, v1.0-final
+Git branch: feature/wire-pathway-fusion-attributions
+Git tags (8): v0.0-scaffold, v0.0.1-data, v0.1-preprocessing, v0.2-baselines, v0.3-fusion, v0.4-analysis, v1.0-final, v1.1-audit
+Last commit: 755b7a6 fix(scripts): address Copilot PR-28 review comments
 
-File type breakdown:
-  Python (.py):       22  (6 src + 15 scripts + 1 agent skill)
-  Jupyter (.ipynb):    7
-  Markdown (.md):      26  (root docs + content/ + docs/ + .github/ + .agents/ + app readmes + data)
-  YAML (.yaml):        1   (config.yaml)
-  JSON (.json):       18  (configs, attributions, enrichment results, QC reports, settings)
-  CSV (.csv):         51  (15 metrics + 22 enrichment + 1 sample_map + 1 dropped + 2 checksums + 10 test dataset metadata/samples)
-  Pickle (.pkl):      50  (10 xgb + 10 rf + 29 app artifacts)
-  PyTorch (.pt):      30  (10 fusion + 10 pathway_fusion + 10 app best-fold)
-  NumPy (.npz):       53  (40 fold predictions + 4 SHAP values + 4 fusion attributions + 5 pathway attributions)
-  PDF (.pdf):         24  (plots + shap + enrichment)
-  PNG (.png):         27  (plots + shap + enrichment)
-  TXT (.txt):          3  (checksums + requirements)
-  Other:              129  (.gitignore, .env, .streamlit, .gitkeep, .claude, .agents skill files, test dataset CSVs, LICENSE)
+Key counts (verified against live filesystem 2026-05-11):
+  src/ modules:            7  (2,235 lines excl. __init__.py)
+  scripts/:               22
+  tests/test_*.py:        10  (32 tests, all pass)
+  notebooks/:              7
+  models/ checkpoints:    40  (4 types × 2 cancers × 5 folds)
+  app/model_artifacts/:   27  (3 legacy un-suffixed on-disk gitignored)
+  app/test_datasets/:     35  (test/13 + synthetic/14 + demo/8)
+  results/ total:        175  (metrics/57, plots/48, shap/37, enrichment/22, calibration/9, qc/2)
+  docs/:                   6
+  experiment_log.csv:    130 canonical rows
 ```

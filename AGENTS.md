@@ -4,7 +4,7 @@ Guidance for OpenCode when working in this repository.
 
 ## Project Overview
 
-MLOmics is a multi-omics cancer subtype classifier (BSc final-year research project). It trains XGBoost/RandomForest baselines and an intermediate-fusion neural network (per-modality encoders → latent concatenation → MLP) on four omics modalities (mRNA, miRNA, DNA methylation, CNV) to classify cancer subtypes for GS-BRCA (5 subtypes) and GS-COAD (4 subtypes).
+MLOmics is a multi-omics cancer subtype classifier (BSc final-year research project). It trains XGBoost/RandomForest baselines and an intermediate-fusion neural network (per-modality encoders → latent concatenation → MLP) on four omics modalities (mRNA, miRNA, DNA methylation, CNV) to classify cancer subtypes for GS-BRCA (5 subtypes) and GS-COAD (4 subtypes). A pathway-aware fusion variant injects KEGG pathway structure into the mRNA encoder. A Streamlit demo app (3 tabs: Prediction, Model Comparison, Data Converter) serves predictions with SHAP/IG explainability, pathway attention, and a lab CSV converter for hospital data.
 
 **Stack:** Python 3.11, PyTorch 2.7 (CUDA 11.8), scikit-learn, XGBoost, SHAP, Captum, gseapy, Streamlit.
 
@@ -55,6 +55,15 @@ python scripts/precompute_fusion_attribution.py   # Run once after training
 python scripts/precompute_latent_space.py         # Run once after training
 streamlit run app/streamlit_app.py                # Launch demo (port 8501)
 
+# Lab data converter (CLI alternative to Streamlit Data Converter tab)
+python scripts/prepare_real_patient_upload.py
+
+# Demo dataset generation (run once; outputs to app/test_datasets/)
+python scripts/create_test_datasets.py
+python scripts/create_synthetic_patients.py
+python scripts/create_demo_patients.py            # Sarah Mitchell + Robert Okonkwo (prediction-ready)
+python scripts/create_lab_patient_files.py        # Amara Nwosu 4-modality lab files (converter test)
+
 # Evaluation & utilities
 python scripts/run_evaluation.py
 python scripts/compute_auc.py                     # Requires trained models
@@ -98,10 +107,13 @@ All hyperparameters, paths, and seeds live in `config.yaml`. Load with `from src
 | `models.py` | `ModalityEncoder` (dense 256→64), `FusionClassifier` (128→num_classes), `IntermediateFusionModel`, `PathwayAwareFusionModel`, `EarlyFusionMLP`, `MultiOmicsDataset` |
 | `evaluation.py` | `compute_metrics()`, `compute_fold_summary()`, `save_metrics()` |
 | `explainability.py` | SHAP TreeExplainer / DeepSHAP / Integrated Gradients; gseapy KEGG enrichment |
+| `patient_converter.py` | `convert_patient_data()`, `ConversionResult`, `ModCoverage`, `_transform_values()` — in-memory conversion of per-modality lab CSVs to single prediction-ready row; auto-detects CSV orientation, normalises miRNA names, applies 4 input-format transforms (zscore/log2/raw/beta), reports per-modality feature coverage |
 
 ### Demo App (`app/streamlit_app.py`)
 
-Launched from project root (adds root to `sys.path`). Loads artifacts from `app/model_artifacts/` at startup (cached with `@st.cache_resource`). All artifacts produced by `scripts/prepare_demo_artifacts.py`.
+Launched from project root (adds root to `sys.path`). Three tabs: **Prediction**, **Model Comparison**, **Data Converter**. Loads artifacts from `app/model_artifacts/` at startup (cached with `@st.cache_resource`). All artifacts produced by `scripts/prepare_demo_artifacts.py`.
+
+**Data Converter tab** calls `src/patient_converter.py` via `importlib.reload` inside the button handler — this prevents stale-module errors on Streamlit hot-reload. Do NOT move the reload out of the button handler.
 
 Production logic belongs in `src/` or `scripts/`; notebooks are thin orchestrators for exploration.
 
