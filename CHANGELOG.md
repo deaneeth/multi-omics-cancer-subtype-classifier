@@ -5,6 +5,68 @@ All notable changes to the MLOmics project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 Tagged releases mark `dev → main` milestone merges.
 
+## [Unreleased] — feature/wire-pathway-fusion-attributions
+
+### Fixed
+- **Demo (Data Converter):** `convert_patient_data()` was raising `TypeError: got an unexpected
+  keyword argument 'data_format'` on Streamlit hot-reload. Root cause: Streamlit's hot-reload
+  mechanism re-executes the main script but keeps `sys.modules['src.patient_converter']` cached
+  from the previous run, so the top-level `from src.patient_converter import convert_patient_data`
+  bound the old function object (without `data_format`). Fixed by moving the import inside the
+  Convert button handler and using `importlib.reload(src.patient_converter)` before each call,
+  ensuring the live module is always used. Constants `MODALITY_LABELS` and `MODALITY_NOTES`
+  remain top-level (they are used at render time and never change at runtime).
+- **Demo (PathwayAwareFusion IG):** `load_fusion_attributions()` now accepts a `model_type`
+  parameter (`"pathway"` | `"intermediate"`). When PathwayAwareFusion is selected, the app
+  correctly loads `pathway_fusion_attribution_results_{suffix}.json` instead of reusing the
+  IntermediateFusion file. The misleading caption ("Attributions shown are from the
+  Intermediate Fusion model …") has been removed.
+- **Demo (Section headers):** Feature Importance heading dynamically shows "Integrated Gradients"
+  for fusion models, "SHAP" for XGBoost. Colour caption updated per model type.
+
+### Added
+- **Demo (Prediction tab):** A "Pathway-Level Attention Weights" panel now renders below the
+  IG bar chart when PathwayAwareFusion is selected. It shows a Plotly horizontal bar chart of
+  the top-10 KEGG pathways by mean attention weight for the current cancer type (data from
+  `results/enrichment/pathway_attention_scores.csv`). Note: weights are nearly uniform
+  (0.003–0.004 range) — see Known Limitation #6 in `PROJECT_SNAPSHOT.md`.
+- **Demo (Prediction tab):** Live Integrated Gradients computation via Captum as fallback when
+  precomputed attributions are unavailable for uploaded samples. Matches XGBoost's always-available
+  SHAP behaviour.
+- **Demo (Data Converter tab):** Third tab "Lab Data Converter" for hospital/lab per-modality
+  CSV upload. Walks users through 4 steps: patient info, modality file upload (any combination),
+  conversion with auto miRNA name normalisation, and coverage report + download. Powered by
+  `src/patient_converter.py`. Supports 4 input data formats: z-scored, log2-transformed,
+  raw counts, and beta values (methylation). Non-z-scored data is automatically normalized
+  using single-sample robust z-scoring (median + IQR).
+- **Module:** `src/patient_converter.py` — in-memory conversion of per-modality lab CSVs to
+  single prediction-ready row. Auto-detects CSV orientation, normalises miRNA names (dash-to-dot),
+  reports per-modality feature coverage with status tiers. Supports normalization from raw counts
+  (log2+zscore), log2-transformed (zscore), beta values (M-value+zscore), or pre-normalized data.
+- **Script:** `scripts/create_lab_patient_files.py` (292 lines) — generates 4 per-modality lab-format CSVs
+  for a synthetic Basal-like BRCA patient (Amara Nwosu). Used to test the Data Converter tab.
+- **Script:** `scripts/create_demo_patients.py` (215 lines) — generates Sarah Mitchell (Luminal A BRCA)
+  and Robert Okonkwo (CMS2 COAD) single-patient prediction-ready CSVs with clinical backstories.
+- **Script:** `scripts/prepare_real_patient_upload.py` (294 lines) — standalone CLI converter (alternative to
+  the Streamlit Data Converter tab) for batch processing.
+- **Demo datasets:** `app/test_datasets/demo/demo_patient_sarah_mitchell_BRCA.csv` (Luminal A)
+  and `demo_patient_robert_okonkwo_COAD.csv` (CMS2) — single-patient prediction-ready CSVs with
+  clinical backstories.
+- **Demo datasets:** `app/test_datasets/demo/convertion/` — 4 lab-format modality files for
+  Amara Nwosu (mRNA, miRNA, methylation, CNV) to test Data Converter workflow.
+- **Data cards:** `DATA_CARD_demo_patients.md` and `convertion/DATA_CARD.md` documenting
+  generation methodology, expected results, and limitations.
+- **Docs:** Comprehensive multi-session fact-check and update of all documentation against live filesystem and result CSVs:
+  - `PROJECT_SNAPSHOT.md` — rev 14: accuracy std corrected to ddof=1 (8 values), Cohen's d exact values (0.197/1.888/0.504), pathway attention name fixed ("Taurine and hypotaurine metabolism"), script line counts corrected (3 scripts), src/ total ~2,235 lines, model parameter counts added (IntFusion 4,036,613; PathwayFusion 3,656,252), plain-English description updated to mention all 3 tabs, `importlib.reload` noted in Data Converter section, demo/ attribution corrected to 2 scripts, "35+" → "35 files"
+  - `PROJECT_FILE_TREE.md` — major overhaul from 2026-05-03 state: 6→7 src modules with correct line counts, 15→22 scripts (7 missing added with correct line counts), 6→10 test files (4 missing added), 23→32 tests, docs 4→6 files, streamlit_app.py ~2,290→~3,875 lines with Data Converter tab described, model_artifacts 29→27 files (ghost entries removed), demo/ directory (8 files) added, data/label_file_checksums.json added, `abstract.md` ghost entry removed from root section
+  - `PROJECT_STORY.md` — complete rewrite: all verified F1/AUC/accuracy values, all statistical test values (p/d), correct pathway attention names, correct SHAP top features, Data Converter 4-format description, 22 scripts/7 modules/32 tests
+  - `PRESENTATION_NARRATION.md` — complete rewrite: all verified metrics, correct Cohen's d values, Data Converter tab described, 3-tab demo, verified KEGG p-values and gene lists
+  - `README.md` — complete rewrite: verified parameter counts, measured latency values, correct dataset descriptions, all 3 tabs, complete script list
+  - `CHANGELOG.md` — script entries corrected with exact line counts, `create_demo_patients.py` entry added
+  - `AGENTS.md` — `patient_converter.py` added to module table, Data Converter `importlib.reload` note added, all 3 new scripts added to commands
+
+---
+
 ## [v1.1-audit] - 2026-05-07
 
 ### Added
@@ -50,7 +112,8 @@ Tagged releases mark `dev → main` milestone merges.
 
 ### Notes
 
-- The PathwayAwareFusion demo falls back to intermediate-fusion attributions when pathway-specific IG artifacts are not precomputed.
+- PathwayAwareFusion IG artifacts (`pathway_fusion_attribution_results_{suffix}.json`) are
+  precomputed and wired in the app as of `feature/wire-pathway-fusion-attributions`.
 - COAD fold 0 AUC may be NaN when the CMS4 class is absent from the validation split.
 
 ---
