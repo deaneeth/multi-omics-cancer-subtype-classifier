@@ -1,6 +1,7 @@
 # MLOmics: Latent-Fusion Multi-Omics Classifier for Cancer Subtype Prediction
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/deaneeth/multi-omics-cancer-subtype-classifier/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/deaneeth/multi-omics-cancer-subtype-classifier/actions/workflows/ci.yml)
 
 > **⚠️ Academic research prototype. Not for clinical use.**
 
@@ -111,6 +112,10 @@ python scripts/run_ablations.py
 python scripts/compute_auc.py
 python scripts/compute_significance_tests.py
 
+# Generate per-fold ROC curves (BRCA and COAD)
+python scripts/generate_roc_curves.py
+python scripts/generate_roc_curves_coad.py
+
 # Export demo artifacts
 python scripts/prepare_demo_artifacts.py
 python scripts/precompute_fusion_attribution.py
@@ -191,7 +196,7 @@ Per-fold runtime stats: `results/metrics/runtime_summary.csv`
 - `results/calibration/` — ECE, MCE, Brier score and reliability diagrams (9 files).
 - `results/shap/` — SHAP values and IG feature attributions (37 files).
 - `results/enrichment/` — KEGG pathway enrichment, GO enrichment, pathway attention scores (22 files).
-- `results/plots/` — training curves, confusion matrices, model comparison bar charts (48 files).
+- `results/plots/` — training curves, confusion matrices, model comparison bar charts (52 files).
 - `app/model_artifacts/` — per-cancer demo artifacts used by the Streamlit app (27 files).
 - `app/test_datasets/` — real TCGA patients, synthetic patients, and demo conversion files (35 files).
 - `docs/preprocessing_verification_report.md` — preprocessing checks and documented limitations.
@@ -233,7 +238,7 @@ Pre-built test datasets in `app/test_datasets/` (35 files across 3 directories):
 ├── models/         # 40 saved model checkpoints (4 types × 2 cancers × 5 folds)
 ├── notebooks/      # 7 exploration, preprocessing, and analysis notebooks
 ├── results/        # 175 results files (metrics, plots, SHAP, enrichment, calibration)
-├── scripts/        # 22 training, evaluation, attribution, and export scripts
+├── scripts/        # 24 training, evaluation, attribution, and export scripts
 ├── src/            # 7 core modules (~2,235 lines: data, preprocessing, models, evaluation, explainability, converter)
 ├── tests/          # 10 test modules, 32 tests
 ├── config.yaml     # Project configuration and hyperparameters (single source of truth)
