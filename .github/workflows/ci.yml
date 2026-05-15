@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test Suite (Python 3.11)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install CPU-only PyTorch
+        run: |
+          pip install torch==2.7.1 torchvision==0.22.1 \
+            --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project dependencies
+        run: |
+          # Exclude torch/torchvision (CPU version already installed above),
+          # pywin32 and pywinpty (Windows-only packages not available on Ubuntu),
+          # and torchaudio (not in requirements.txt but guard anyway).
+          grep -vE '^(torch|torchvision|torchaudio|pywin32|pywinpty)' requirements.txt \
+            > /tmp/requirements_ci.txt
+          pip install -r /tmp/requirements_ci.txt
+          # pytest is not in requirements.txt (it is a dev-only dependency);
+          # install explicitly so the test runner is always available.
+          pip install pytest
+
+      - name: Run test suite
+        env:
+          PYTHONHASHSEED: "42"
+        run: |
+          python -m pytest tests/ -v --tb=short
+
+  lint:
+    name: Import & Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CPU-only PyTorch
+        run: |
+          pip install torch==2.7.1 \
+            --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install core src dependencies
+        run: |
+          grep -vE '^(torch|torchvision|torchaudio|pywin32|pywinpty)' requirements.txt \
+            > /tmp/requirements_ci.txt
+          pip install -r /tmp/requirements_ci.txt
+          pip install pytest
+
+      - name: Verify all src modules import cleanly
+        env:
+          PYTHONHASHSEED: "42"
+        run: |
+          python -c "import src.utils"
+          python -c "import src.data_loader"
+          python -c "import src.preprocessing"
+          python -c "import src.models"
+          python -c "import src.evaluation"
+          python -c "import src.explainability"
+          python -c "import src.patient_converter"
+
+      - name: Compile all scripts for syntax errors
+        run: |
+          python -m py_compile scripts/train_baselines.py
+          python -m py_compile scripts/train_fusion.py
+          python -m py_compile scripts/train_pathway_fusion.py
+          python -m py_compile scripts/run_explainability.py
+          python -m py_compile scripts/run_ablations.py
+          python -m py_compile scripts/compute_auc.py
+          python -m py_compile scripts/compute_significance_tests.py
+          python -m py_compile scripts/prepare_demo_artifacts.py
+          python -m py_compile scripts/precompute_fusion_attribution.py
+          python -m py_compile scripts/precompute_latent_space.py
+          python -m py_compile scripts/generate_roc_curves.py
+          python -m py_compile scripts/generate_roc_curves_coad.py
+          python -m py_compile scripts/calibration_analysis.py
+          python -m py_compile scripts/measure_runtime.py
+          python -m py_compile scripts/run_evaluation.py
+          python -m py_compile scripts/shap_analysis.py
+          python -m py_compile scripts/create_test_datasets.py
+          python -m py_compile scripts/create_synthetic_patients.py
+          python -m py_compile scripts/create_demo_patients.py
+          python -m py_compile scripts/create_lab_patient_files.py
+          python -m py_compile scripts/prepare_real_patient_upload.py
+          python -m py_compile scripts/create_toy_dataset.py
+          python -m py_compile scripts/verify_label_alignment.py
+          python -m py_compile scripts/validate_artifacts.py

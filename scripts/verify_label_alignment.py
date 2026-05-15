@@ -37,8 +37,12 @@ DOCUMENTED_SAMPLE_COUNTS = {
 
 
 def sha256_file(path: str) -> str:
+    # Normalize CRLF → LF before hashing so checksums are platform-independent.
+    # Git may check out text files with CRLF on Windows and LF on Linux/macOS;
+    # storing the LF-normalized hash ensures the test passes on both platforms.
     with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+        content = f.read().replace(b"\r\n", b"\n")
+    return hashlib.sha256(content).hexdigest()
 
 
 def verify_cancer(cancer_type: str, config: dict, use_toy: bool) -> tuple[bool, str | None]:

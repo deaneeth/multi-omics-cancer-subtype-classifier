@@ -5,7 +5,22 @@ All notable changes to the MLOmics project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 Tagged releases mark `dev → main` milestone merges.
 
-## [Unreleased] — feature/wire-pathway-fusion-attributions
+## [Unreleased]
+
+### Added
+- **CI/CD:** GitHub Actions workflow (`.github/workflows/ci.yml`) with two jobs:
+  - `test` — runs the full pytest suite (`tests/`) on every PR targeting `main` and on every push to `dev`, using CPU-only PyTorch to avoid GPU runner requirements.
+  - `lint` — verifies all 7 `src/` modules import cleanly and all 24 scripts compile without syntax errors.
+- **Results:** `results/plots/pathway_attention_top10_COAD.pdf` and `.png` — GS-COAD-specific
+  pathway attention bar chart (top-10 KEGG pathways by mean attention weight from PathwayAwareFusion).
+  Completes the per-cancer pathway attention visualization suite alongside the existing BRCA file.
+- **README:** CI badge, ROC curve generation commands (`scripts/generate_roc_curves.py` and
+  `scripts/generate_roc_curves_coad.py`), corrected script count (22 → 24), corrected plot count
+  (48 → 52).
+
+---
+
+## [v1.1-wire-attributions] — feature/wire-pathway-fusion-attributions
 
 ### Fixed
 - **Demo (Data Converter):** `convert_patient_data()` was raising `TypeError: got an unexpected

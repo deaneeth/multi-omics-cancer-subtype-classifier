@@ -17,8 +17,12 @@ from src.data_loader import load_labels, load_modality
 
 
 def _sha256(path: str) -> str:
+    # Normalize CRLF → LF before hashing so the checksum is platform-independent.
+    # Git may check out text files with CRLF on Windows and LF on Linux/macOS,
+    # which would otherwise produce different hashes for identical file content.
     with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+        content = f.read().replace(b"\r\n", b"\n")
+    return hashlib.sha256(content).hexdigest()
 
 
 def test_toy_label_count_matches_mrna_sample_count(config: dict) -> None:
