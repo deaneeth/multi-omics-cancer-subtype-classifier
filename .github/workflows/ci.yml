@@ -45,6 +45,9 @@ jobs:
           grep -vE '^(torch|torchvision|torchaudio|pywin32|pywinpty)' requirements.txt \
             > /tmp/requirements_ci.txt
           pip install -r /tmp/requirements_ci.txt
+          # pytest is not in requirements.txt (it is a dev-only dependency);
+          # install explicitly so the test runner is always available.
+          pip install pytest
 
       - name: Run test suite
         env:
@@ -75,6 +78,7 @@ jobs:
           grep -vE '^(torch|torchvision|torchaudio|pywin32|pywinpty)' requirements.txt \
             > /tmp/requirements_ci.txt
           pip install -r /tmp/requirements_ci.txt
+          pip install pytest
 
       - name: Verify all src modules import cleanly
         env:
