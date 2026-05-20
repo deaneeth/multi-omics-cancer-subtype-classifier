@@ -14,7 +14,7 @@
 | `requirements.txt` | Pinned Python package versions (150 packages, UTF-8 encoded). Core: torch 2.7.1+cu118, scikit-learn 1.6.1, xgboost 2.1.4, shap 0.49.1, captum 0.8.0, gseapy 1.1.11, streamlit 1.50.0 |
 | `experiment_log.csv` | 130 canonical rows (deduplicated from 276; archive at `experiment_log_archive_2026-05-06.csv`) tracking every training run: timestamp, experiment name, cancer type, model type, feature count, fold index, F1/precision/recall/NMI/ARI metrics, notes, artifact path |
 | `.gitignore` | Git exclusion rules: ignores `data/raw/`, `data/preprocessed/`, `*.pkl`, `*.pt`, `__pycache__/`, `.ipynb_checkpoints/`, `content/` directory, legacy demo artifacts, `.env`, IDE configs |
-| `AGENTS.md` | AI agent guidance: commands, import system, architecture, key invariants, data gotchas, hardware constraints, git workflow |
+| `AGENTS.md` | ~~AI agent guidance~~ — **removed** (agent rules migrated to `.agents/AGENTS.md` and `.claude/CLAUDE.md`) |
 | `CHANGELOG.md` | Keep-a-changelog format: v0.0-scaffold through v0.5-demo and unreleased changes. Documents every feature addition, fix, and notable finding |
 | `explain.md` | FAQ document: answers clinical context questions — why subtype classification matters, treatment implications, best demo files to use, project positioning |
 
